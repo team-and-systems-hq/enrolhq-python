@@ -1,6 +1,6 @@
 # EnrolHQ Python SDK
 
-Python SDK for the [EnrolHQ](https://enrolhq.com.au) school enrolment management API.
+Python SDK for the [EnrolHQ](https://enrolhq.com.au) school enrolments and admissions platform API.
 
 ## Installation
 
