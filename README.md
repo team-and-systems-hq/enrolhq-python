@@ -2,6 +2,8 @@
 
 Python SDK for the [EnrolHQ](https://enrolhq.com.au) school enrolments and admissions platform API.
 
+API Documentation [Swagger](https://demo.enrolhq.com.au/api-docs/swagger/) or [ReDoc](https://demo.enrolhq.com.au/api-docs/redoc/)
+
 ## Installation
 
 ```bash
