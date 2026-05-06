@@ -70,10 +70,14 @@ class ApplicationsResource(BaseResource):
             application_ids: List of application UUIDs.
             status: Target ApplicationStatus value.
         """
+        ids = [str(i) for i in application_ids]
+        # The API expects repeated `id` query params (e.g. ?id=a&id=b), not
+        # `id__in=`. Without a recognised filter the endpoint refuses with
+        # "Bulk action on all items is not allowed".
         return self._post(
             "applications-list/change_status/",
             json={"application_status": int(status)},
-            params={"id__in": ",".join(str(i) for i in application_ids)},
+            params={"id": ids[0] if len(ids) == 1 else ids},
         )
 
     def send_mail(
