@@ -358,6 +358,24 @@ Pass `student_profile_id` **or** `parent_id` (at least one is required).
 
 ---
 
+## 14 - Activity Log
+
+**File:** [`14_activity_log.py`](14_activity_log.py)
+
+List the activity log for a student profile. `activity-log/` returns timestamped entries (emails, status changes, notes, etc.); each has an `activity_kind`, `description`, `occurred_at` / `created_at`, `created_by`, and an optional `attachment_src`. `list()` auto-paginates.
+
+```python
+# Replace with a real student profile UUID from your instance.
+for entry in client.activity_log.list("student-profile-uuid", page_size=1000):
+    print(entry["occurred_at"], entry["activity_kind"], entry["description"])
+
+# Or a single page
+page = client.activity_log.list_page("student-profile-uuid", page=1, page_size=25)
+print(f"{len(page)} of {page.count} entries")
+```
+
+---
+
 ## Error Handling
 
 All examples will raise clear exceptions on failure:

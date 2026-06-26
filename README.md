@@ -120,6 +120,16 @@ except ForbiddenError:
 
 See the [`examples/`](examples/) directory for complete working examples, and the [Examples Guide](examples/GUIDE.md) for a full walkthrough of each one.
 
+## Testing
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+- **Unit tests** (`tests/test_unit.py`) run fully offline and need no credentials.
+- **Integration tests** (`tests/test_integration.py`) make real API calls and **only work with a valid `.env` file** providing `ENROLHQ_BASE_URL` and `ENROLHQ_API_TOKEN`. Without valid credentials they cannot authenticate and will fail.
+
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.

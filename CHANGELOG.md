@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Example `14_activity_log.py` and a matching Examples Guide section for the
+  existing `client.activity_log` resource (uses a placeholder UUID).
+- Offline unit tests for `ActivityLogResource` (`list` / `list_page`).
+
+### Documentation
+
+- Document that the integration test suite makes real API calls and only runs
+  with a valid `.env` (`ENROLHQ_BASE_URL` + `ENROLHQ_API_TOKEN`); unit tests run
+  offline with no credentials. Added a "Testing" section to the README.
+
 ## [0.2.0] - 2026-06-26
 
 ### Added
