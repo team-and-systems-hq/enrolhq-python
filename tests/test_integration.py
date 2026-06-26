@@ -7,6 +7,7 @@ import pytest
 
 from enrolhq import (
     ApplicationStatus,
+    CursorPaginatedIterator,
     EnrolHQClient,
     ForbiddenError,
     NotFoundError,
@@ -158,6 +159,58 @@ class TestEmailLog:
         assert isinstance(emails, list)
 
 
+# ── Audit Log ──────────────────────────────────────────────
+
+class TestAuditLog:
+    def test_list_returns_cursor_iterator(self, client):
+        page = client.applications.list_page(page_size=1)
+        app_id = page[0]["id"]
+        it = client.audit_log.list(student_profile_id=app_id, page_size=5)
+        assert isinstance(it, CursorPaginatedIterator)
+
+    def test_list_by_student_profile(self, client):
+        page = client.applications.list_page(page_size=1)
+        app_id = page[0]["id"]
+        entries = list(client.audit_log.list(student_profile_id=app_id, page_size=5))
+        assert isinstance(entries, list)
+        for entry in entries:
+            assert "changes" in entry
+            assert "updated_at" in entry
+
+    def test_list_requires_filter(self, client):
+        with pytest.raises(ValueError):
+            client.audit_log.list()
+
+
+# ── CMS Settings ───────────────────────────────────────────
+
+class TestCmsSettings:
+    def test_get(self, client):
+        settings = client.cms_settings.get()
+        assert isinstance(settings, dict)
+        assert "parent_label" in settings
+        assert "event_booking" in settings
+
+
+# ── Metafields ─────────────────────────────────────────────
+
+class TestMetafields:
+    def test_get(self, client):
+        data = client.metafields.get()
+        assert isinstance(data, dict)
+        assert "field_settings" in data
+        assert "default_field_settings" in data
+
+    def test_field_settings_accessor(self, client):
+        fs = client.metafields.field_settings()
+        assert isinstance(fs, dict)
+        assert len(fs) > 0
+
+    def test_default_field_settings_accessor(self, client):
+        dfs = client.metafields.default_field_settings()
+        assert isinstance(dfs, dict)
+
+
 # ── Reference Data ──────────────────────────────────────────
 
 class TestReferenceData:
@@ -192,6 +245,15 @@ class TestReferenceData:
     def test_profile_categories(self, client):
         cats = client.reference_data.profile_categories()
         assert isinstance(cats, list)
+
+    def test_application_status_settings(self, client):
+        settings = client.reference_data.application_status_settings()
+        assert isinstance(settings, list)
+        assert len(settings) > 0
+        row = settings[0]
+        assert "application_status" in row
+        assert "status_label" in row
+        assert "is_status_enabled" in row
 
 
 # ── Staff ───────────────────────────────────────────────────

@@ -31,7 +31,7 @@ def _clean_env(monkeypatch):
 # ── Version ─────────────────────────────────────────────────
 
 def test_version():
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.2.0"
 
 
 # ── Constants ───────────────────────────────────────────────
@@ -170,7 +170,7 @@ def test_client_has_all_resources():
     for attr in [
         "applications", "documents", "notes", "activity_log", "email_log",
         "events", "event_bookings", "payments", "staff", "analytics",
-        "reference_data",
+        "reference_data", "audit_log", "cms_settings", "metafields",
     ]:
         assert hasattr(c, attr), f"Missing resource: {attr}"
 
@@ -282,3 +282,168 @@ def test_paginated_iterator_rejects_bad_page_size():
         PaginatedIterator(None, "http://x", page_size=0)
     with pytest.raises(ValueError, match="page_size"):
         PaginatedIterator(None, "http://x", page_size=-1)
+
+
+# ── Fake HTTP for resource/pagination unit tests ────────────
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class _FakeHttp:
+    """Records GET calls and returns queued JSON payloads in order."""
+
+    def __init__(self, *payloads):
+        self._payloads = list(payloads)
+        self.calls = []  # list of (url, params)
+
+    def get(self, url, params=None, **kwargs):
+        self.calls.append((url, params))
+        return _FakeResponse(self._payloads.pop(0))
+
+
+BASE = "https://x.enrolhq.com.au/api/v2/"
+
+
+# ── CursorPaginatedIterator ─────────────────────────────────
+
+def test_cursor_iterator_rejects_bad_page_size():
+    from enrolhq.pagination import CursorPaginatedIterator
+    with pytest.raises(ValueError, match="page_size"):
+        CursorPaginatedIterator(None, "http://x", page_size=0)
+    with pytest.raises(ValueError, match="page_size"):
+        CursorPaginatedIterator(None, "http://x", page_size=-1)
+
+
+def test_cursor_iterator_single_page():
+    from enrolhq.pagination import CursorPaginatedIterator
+    http = _FakeHttp({"results": [{"id": 1}, {"id": 2}], "next": None})
+    items = list(CursorPaginatedIterator(http, BASE + "audit/log/", page_size=25))
+    assert items == [{"id": 1}, {"id": 2}]
+    assert len(http.calls) == 1
+
+
+def test_cursor_iterator_follows_next_url():
+    from enrolhq.pagination import CursorPaginatedIterator
+    cursor_url = BASE + "audit/log/?cursor=abc&page_size=2"
+    http = _FakeHttp(
+        {"results": [{"id": 1}], "next": cursor_url},
+        {"results": [{"id": 2}], "next": None},
+    )
+    it = CursorPaginatedIterator(
+        http, BASE + "audit/log/", params={"student_profile": "sid"}, page_size=2
+    )
+    assert list(it) == [{"id": 1}, {"id": 2}]
+    # First call carries the filter params + page_size...
+    assert http.calls[0][0] == BASE + "audit/log/"
+    assert http.calls[0][1] == {"student_profile": "sid", "page_size": 2}
+    # ...subsequent calls follow the server's next URL verbatim, no params.
+    assert http.calls[1] == (cursor_url, None)
+
+
+def test_cursor_iterator_empty():
+    from enrolhq.pagination import CursorPaginatedIterator
+    http = _FakeHttp({"results": [], "next": None})
+    assert list(CursorPaginatedIterator(http, BASE + "audit/log/")) == []
+
+
+def test_cursor_iterator_respects_max_pages():
+    """A never-ending cursor must stop at max_pages, not loop forever."""
+    from enrolhq.pagination import CursorPaginatedIterator
+    always_next = BASE + "audit/log/?cursor=zzz"
+    http = _FakeHttp(
+        {"results": [{"id": 1}], "next": always_next},
+        {"results": [{"id": 2}], "next": always_next},
+        {"results": [{"id": 3}], "next": always_next},
+    )
+    it = CursorPaginatedIterator(http, BASE + "audit/log/", max_pages=2)
+    assert list(it) == [{"id": 1}, {"id": 2}]
+    assert len(http.calls) == 2
+
+
+# ── AuditLogResource ────────────────────────────────────────
+
+def test_audit_log_filters_by_student_profile():
+    from enrolhq.pagination import CursorPaginatedIterator
+    from enrolhq.resources.audit_log import AuditLogResource
+    http = _FakeHttp({"results": [{"changes": []}], "next": None})
+    res = AuditLogResource(http, BASE)
+    it = res.list(student_profile_id="sid")
+    assert isinstance(it, CursorPaginatedIterator)
+    list(it)  # consume to trigger the request
+    url, params = http.calls[0]
+    assert url == BASE + "audit/log/"
+    assert params["student_profile"] == "sid"
+    assert params["page_size"] == 25
+
+
+def test_audit_log_filters_by_parent():
+    from enrolhq.resources.audit_log import AuditLogResource
+    http = _FakeHttp({"results": [], "next": None})
+    res = AuditLogResource(http, BASE)
+    list(res.list(parent_id="pid", page_size=10))
+    _, params = http.calls[0]
+    assert params["parent"] == "pid"
+    assert params["page_size"] == 10
+
+
+def test_audit_log_requires_a_filter():
+    from enrolhq.resources.audit_log import AuditLogResource
+    res = AuditLogResource(_FakeHttp(), BASE)
+    with pytest.raises(ValueError, match="student_profile_id"):
+        res.list()
+
+
+# ── CmsSettingsResource ─────────────────────────────────────
+
+def test_cms_settings_get():
+    from enrolhq.resources.cms_settings import CmsSettingsResource
+    payload = {"parent_label": "Parent / Carer", "event_booking": {}}
+    http = _FakeHttp(payload)
+    res = CmsSettingsResource(http, BASE)
+    assert res.get() == payload
+    assert http.calls[0][0] == BASE + "cms-settings/"
+
+
+# ── MetafieldsResource ──────────────────────────────────────
+
+def test_metafields_get():
+    from enrolhq.resources.metafields import MetafieldsResource
+    payload = {"field_settings": {"parent": {}}, "default_field_settings": {}}
+    http = _FakeHttp(payload)
+    res = MetafieldsResource(http, BASE)
+    assert res.get() == payload
+    assert http.calls[0][0] == BASE + "metafields/"
+
+
+def test_metafields_field_settings_accessor():
+    from enrolhq.resources.metafields import MetafieldsResource
+    fs = {"parent": {"email": {}}}
+    res = MetafieldsResource(_FakeHttp({"field_settings": fs}), BASE)
+    assert res.field_settings() == fs
+
+
+def test_metafields_accessors_default_to_empty():
+    from enrolhq.resources.metafields import MetafieldsResource
+    res = MetafieldsResource(_FakeHttp({}, {}), BASE)
+    assert res.field_settings() == {}
+    assert res.default_field_settings() == {}
+
+
+# ── ReferenceDataResource.application_status_settings ───────
+
+def test_reference_data_application_status_settings():
+    from enrolhq.resources.reference_data import ReferenceDataResource
+    rows = [
+        {"application_status": 0, "status_label": "Enquiry"},
+        {"application_status": 3, "status_label": "Enrolment"},
+    ]
+    http = _FakeHttp({"results": rows, "next": None})
+    res = ReferenceDataResource(http, BASE)
+    result = res.application_status_settings()
+    assert result == rows
+    assert http.calls[0][0] == BASE + "application-status-settings/"

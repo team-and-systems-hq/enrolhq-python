@@ -12,7 +12,11 @@ from .exceptions import (
     RateLimitError,
     ValidationError,
 )
-from .pagination import PaginatedIterator, PaginatedResponse
+from .pagination import (
+    CursorPaginatedIterator,
+    PaginatedIterator,
+    PaginatedResponse,
+)
 
 __all__ = [
     "__version__",
@@ -29,4 +33,5 @@ __all__ = [
     "RateLimitError",
     "PaginatedIterator",
     "PaginatedResponse",
+    "CursorPaginatedIterator",
 ]
