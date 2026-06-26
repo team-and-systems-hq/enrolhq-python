@@ -12,8 +12,9 @@ from enrolhq import EnrolHQClient
 
 client = EnrolHQClient()  # reads from .env
 
-STUDENT_PROFILE_ID = "312d6e0c-ab79-4a71-8e47-ec769791861b"
-PARENT_ID = "657d463d-044d-4bff-8925-b4a5074f5920"
+# Replace with real IDs from your instance.
+STUDENT_PROFILE_ID = "student-profile-uuid"
+PARENT_ID = "parent-uuid"
 
 # Audit log for a student profile — iterate every page automatically.
 print(f"Audit log for student {STUDENT_PROFILE_ID}:")
