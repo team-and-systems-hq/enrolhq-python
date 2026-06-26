@@ -398,6 +398,37 @@ def test_audit_log_requires_a_filter():
         res.list()
 
 
+# ── ActivityLogResource ─────────────────────────────────────
+
+def test_activity_log_filters_by_student_profile():
+    from enrolhq.pagination import PaginatedIterator
+    from enrolhq.resources.activity_log import ActivityLogResource
+    http = _FakeHttp({"results": [{"description": "x"}], "next": None})
+    res = ActivityLogResource(http, BASE)
+    it = res.list("sid", page_size=1000)
+    assert isinstance(it, PaginatedIterator)
+    list(it)  # consume to trigger the request
+    url, params = http.calls[0]
+    assert url == BASE + "activity-log/"
+    assert params["student_profile"] == "sid"
+    assert params["page_size"] == 1000
+
+
+def test_activity_log_list_page():
+    from enrolhq.resources.activity_log import ActivityLogResource
+    http = _FakeHttp(
+        {"count": 3, "results": [{"description": "a"}], "next": None}
+    )
+    res = ActivityLogResource(http, BASE)
+    page = res.list_page("sid", page=2, page_size=50)
+    url, params = http.calls[0]
+    assert url == BASE + "activity-log/"
+    assert params["student_profile"] == "sid"
+    assert params["page"] == 2
+    assert params["page_size"] == 50
+    assert page.count == 3
+
+
 # ── CmsSettingsResource ─────────────────────────────────────
 
 def test_cms_settings_get():

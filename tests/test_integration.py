@@ -1,6 +1,14 @@
-"""Integration tests against the live masterclass API.
+"""Integration tests against the live EnrolHQ API.
 
-Requires a .env file with ENROLHQ_BASE_URL and ENROLHQ_API_TOKEN.
+These tests make real network calls and ONLY work with a valid ``.env`` file
+in the project root providing credentials::
+
+    ENROLHQ_BASE_URL=https://yourschool.enrolhq.com.au/api/v2/
+    ENROLHQ_API_TOKEN=your_api_token_here
+
+Without valid credentials the ``client`` fixture cannot authenticate and these
+tests will fail. The unit tests in ``test_unit.py`` need no credentials and run
+fully offline.
 """
 
 import pytest
