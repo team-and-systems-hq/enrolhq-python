@@ -72,6 +72,16 @@ for app in page:
     print(app["first_name"])
 ```
 
+Most list endpoints use page-number pagination. A few (e.g. the audit log) use
+**cursor pagination** instead — they return no total `count`, and iterating
+follows the server's `next` cursor automatically:
+
+```python
+# Auto-follows cursor pages; no count is available
+for entry in client.audit_log.list(student_profile_id="student-uuid"):
+    print(entry["updated_at"], entry["changes"])
+```
+
 ## Resources
 
 | Resource | Access | Operations |
@@ -80,13 +90,16 @@ for app in page:
 | Documents | `client.documents` | list, upload, download, delete |
 | Notes | `client.notes` | list, create |
 | Activity Log | `client.activity_log` | list, create |
+| Audit Log | `client.audit_log` | list (by student_profile or parent) |
 | Email Log | `client.email_log` | list |
 | Events | `client.events` | list, get, create, update, delete |
 | Event Bookings | `client.event_bookings` | list, create, update |
 | Payments | `client.payments` | order_lines, batch_update_order_lines |
 | Staff | `client.staff` | list, get, create, update, toggle_active |
 | Analytics | `client.analytics` | statistics, conversion, status_conversion |
-| Reference Data | `client.reference_data` | campuses, countries, languages, etc. |
+| Reference Data | `client.reference_data` | campuses, countries, languages, application_status_settings, etc. |
+| CMS Settings | `client.cms_settings` | get |
+| Metafields | `client.metafields` | get, field_settings, default_field_settings |
 
 ## Error handling
 
@@ -106,6 +119,10 @@ except ForbiddenError:
 ## Examples
 
 See the [`examples/`](examples/) directory for complete working examples, and the [Examples Guide](examples/GUIDE.md) for a full walkthrough of each one.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## License
 

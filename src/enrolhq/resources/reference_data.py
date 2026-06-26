@@ -15,6 +15,16 @@ class ReferenceDataResource(BaseResource):
         """Fetch all results from a paginated endpoint as a flat list."""
         return list(self._list(endpoint, page_size=page_size))
 
+    def application_status_settings(self) -> List[Dict[str, Any]]:
+        """List application status settings.
+
+        Each record describes how an application status is configured for the
+        school: ``application_status`` (the :class:`~enrolhq.ApplicationStatus`
+        int), ``status_label``, ``default_status_label``, ``is_status_enabled``,
+        ``is_status_enabled_editable``, and ``is_parent_dashboard_stage_visible``.
+        """
+        return self._get_all("application-status-settings/")
+
     def campuses(self) -> List[Dict[str, Any]]:
         """List all school campuses."""
         return self._get_all("school-campuses/")

@@ -276,6 +276,88 @@ Key concepts:
 
 ---
 
+## 11 - CMS Settings
+
+**File:** [`11_cms_settings.py`](11_cms_settings.py)
+
+Read the school's CMS / form configuration. `cms-settings/` is read-only and returns a single config object: enquiry & event-booking copy, form labels, terms & conditions, parent-dashboard visibility flags, and the policy documents shown to applicants.
+
+```python
+settings = client.cms_settings.get()
+
+print(settings["parent_label"])                  # "Parent / Carer"
+print(settings["event_booking"]["page_header"])  # nested objects
+
+for item in settings["school_policy_agreement_items"]:
+    print(item["label"], item["file_src"] or item["url"])
+```
+
+---
+
+## 12 - Metafields
+
+**File:** [`12_metafields.py`](12_metafields.py)
+
+Inspect per-model field configuration. `metafields/` is read-only and returns `field_settings` (the school's configured fields) and `default_field_settings` (platform defaults), each keyed by model. Every field has a `label` plus `enabled` / `mandatory` maps keyed by scope.
+
+| Scope | Meaning |
+|-------|---------|
+| `enr` | Enrolment form |
+| `eoi` | GPA / EOI form |
+| `enq` | Enquiry form |
+| `evt` | Event booking |
+| `cust` | Custom form |
+| `admin` | Admin view (`enabled` only) |
+
+```python
+fields = client.metafields.field_settings()
+
+# `_meta` is metadata, not a field — skip it when iterating a model's fields.
+for name, cfg in fields["parent"].items():
+    if name == "_meta":
+        continue
+    print(cfg["label"], cfg["enabled"]["enr"], cfg["mandatory"]["enr"])
+```
+
+Convenience accessors:
+- `client.metafields.get()` — the full `{field_settings, default_field_settings}` object
+- `client.metafields.field_settings()` — just the configured map
+- `client.metafields.default_field_settings()` — just the platform defaults
+
+---
+
+## 13 - Audit Log
+
+**File:** [`13_audit_log.py`](13_audit_log.py)
+
+Read the audit / change log for a student profile or a parent. `audit/log/` is read-only and **cursor-paginated** (no total `count`); iterating follows the server's `next` cursor automatically. Each entry has a list of human-readable `changes` plus `updated_at` and `updated_by`.
+
+```python
+# By student profile
+for entry in client.audit_log.list(student_profile_id="<uuid>"):
+    for change in entry["changes"]:
+        print(entry["updated_at"], change)
+
+# By parent
+for entry in client.audit_log.list(parent_id="<uuid>", page_size=25):
+    ...
+```
+
+Pass `student_profile_id` **or** `parent_id` (at least one is required).
+
+> **Note on notes & ordering:** the existing `client.notes.list(...)` already
+> accepts arbitrary query params, so ordering works without any new code:
+>
+> ```python
+> notes = client.notes.list(
+>     "<student-profile-uuid>",
+>     page_size=1000,
+>     ordering="-is_pinned,-created_at",
+> )
+> ```
+
+---
+
 ## Error Handling
 
 All examples will raise clear exceptions on failure:

@@ -9,10 +9,13 @@ from .resources import (
     ActivityLogResource,
     AnalyticsResource,
     ApplicationsResource,
+    AuditLogResource,
+    CmsSettingsResource,
     DocumentsResource,
     EmailLogResource,
     EventBookingsResource,
     EventsResource,
+    MetafieldsResource,
     NotesResource,
     PaymentsResource,
     ReferenceDataResource,
@@ -100,6 +103,7 @@ class EnrolHQClient:
         self.documents = DocumentsResource(self._http, self.base_url)
         self.notes = NotesResource(self._http, self.base_url)
         self.activity_log = ActivityLogResource(self._http, self.base_url)
+        self.audit_log = AuditLogResource(self._http, self.base_url)
         self.email_log = EmailLogResource(self._http, self.base_url)
         self.events = EventsResource(self._http, self.base_url)
         self.event_bookings = EventBookingsResource(self._http, self.base_url)
@@ -107,6 +111,8 @@ class EnrolHQClient:
         self.staff = StaffResource(self._http, self.base_url)
         self.analytics = AnalyticsResource(self._http, self.base_url)
         self.reference_data = ReferenceDataResource(self._http, self.base_url)
+        self.cms_settings = CmsSettingsResource(self._http, self.base_url)
+        self.metafields = MetafieldsResource(self._http, self.base_url)
 
     def __repr__(self) -> str:
         return f"EnrolHQClient(base_url={self.base_url!r})"

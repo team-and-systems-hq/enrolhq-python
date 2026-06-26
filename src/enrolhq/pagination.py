@@ -106,3 +106,67 @@ class PaginatedIterator:
         if self._total is None:
             self._fetch_next()
         return self._total
+
+
+class CursorPaginatedIterator:
+    """Lazily iterates through a cursor-paginated endpoint.
+
+    Some endpoints (e.g. ``audit/log/``) use DRF cursor pagination: each page
+    is ``{"next": "<url-with-cursor>", "previous": ..., "results": [...]}`` with
+    no ``count``. Unlike :class:`PaginatedIterator` (which sends ``page=N``),
+    this follows the server-provided ``next`` URL verbatim — sending a page
+    number would be ignored by the cursor endpoint and re-fetch the first page.
+
+    Usage::
+
+        for entry in CursorPaginatedIterator(http, url, params):
+            print(entry)
+    """
+
+    def __init__(
+        self,
+        http: Any,
+        url: str,
+        params: Optional[Dict[str, Any]] = None,
+        page_size: int = 100,
+        max_pages: int = MAX_PAGES,
+    ) -> None:
+        if page_size < 1:
+            raise ValueError("page_size must be >= 1")
+        self._http = http
+        self._next_url: Optional[str] = url
+        self._params: Optional[Dict[str, Any]] = dict(params or {})
+        self._params["page_size"] = page_size
+        self._max_pages = max_pages
+        self._page = 0
+        self._buffer: Deque[Dict[str, Any]] = deque()
+        self._exhausted = False
+
+    def __iter__(self) -> Iterator[Dict[str, Any]]:
+        return self
+
+    def __next__(self) -> Dict[str, Any]:
+        if self._buffer:
+            return self._buffer.popleft()
+        if self._exhausted:
+            raise StopIteration
+        self._fetch_next()
+        if not self._buffer:
+            raise StopIteration
+        return self._buffer.popleft()
+
+    def _fetch_next(self) -> None:
+        self._page += 1
+        if self._next_url is None or self._page > self._max_pages:
+            self._exhausted = True
+            return
+        # First request carries the filter params; the `next` URL returned by
+        # the server already encodes cursor + page_size + filters, so follow it
+        # verbatim with no extra params.
+        resp = self._http.get(self._next_url, params=self._params)
+        self._params = None
+        data = resp.json()
+        self._buffer = deque(data.get("results", []))
+        self._next_url = data.get("next")
+        if not self._next_url:
+            self._exhausted = True

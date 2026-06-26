@@ -3,7 +3,11 @@
 from typing import Any, Dict, List, Optional
 
 from ..http import HttpClient
-from ..pagination import PaginatedIterator, PaginatedResponse
+from ..pagination import (
+    CursorPaginatedIterator,
+    PaginatedIterator,
+    PaginatedResponse,
+)
 
 
 class BaseResource:
@@ -24,6 +28,17 @@ class BaseResource:
     ) -> PaginatedIterator:
         """Return a PaginatedIterator over all results."""
         return PaginatedIterator(
+            self._http, self._url(endpoint), params=params, page_size=page_size
+        )
+
+    def _list_cursor(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        page_size: int = 100,
+    ) -> CursorPaginatedIterator:
+        """Return a CursorPaginatedIterator over all results (cursor pagination)."""
+        return CursorPaginatedIterator(
             self._http, self._url(endpoint), params=params, page_size=page_size
         )
 
