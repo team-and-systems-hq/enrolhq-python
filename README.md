@@ -6,14 +6,23 @@ API Documentation [Swagger](https://demo.enrolhq.com.au/api-docs/swagger/) or [R
 
 ## Installation
 
+The SDK is installed from GitHub (it is not published on PyPI). Install it
+directly with pip:
+
 ```bash
-pip install enrolhq
+pip install git+https://github.com/team-and-systems-hq/enrolhq-python.git@main
 ```
 
-Or install from source:
+Or pin it in your `requirements.txt`:
+
+```txt
+enrolhq @ git+https://github.com/team-and-systems-hq/enrolhq-python.git@main
+```
+
+For local development, clone the repo and install in editable mode:
 
 ```bash
-git clone https://github.com/enrolhq/enrolhq-python.git
+git clone https://github.com/team-and-systems-hq/enrolhq-python.git
 cd enrolhq-python
 pip install -e .
 ```
