@@ -61,6 +61,10 @@ class ReferenceDataResource(BaseResource):
         """List all timezones."""
         return self._get_all("dictionaries/timezones/")
 
+    def lead_references(self) -> List[Dict[str, Any]]:
+        """List lead references (also available as ``client.leads.references()``)."""
+        return self._get_all("lead-references/")
+
     def medical_condition_options(self) -> List[Dict[str, Any]]:
         """List medical condition options."""
         return self._get_all("medical-condition-options/")

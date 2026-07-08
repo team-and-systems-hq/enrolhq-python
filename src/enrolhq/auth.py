@@ -1,11 +1,14 @@
 """Authentication for the EnrolHQ API."""
 
 import json
-from typing import Dict
+from typing import Any, Dict
 
 import requests
 
 from .exceptions import AuthenticationError
+
+#: Default request timeout in seconds (connect, read).
+DEFAULT_TIMEOUT = (10, 30)
 
 
 class TokenAuth:
@@ -15,17 +18,22 @@ class TokenAuth:
     via the /accounts/refresh/ endpoint.
     """
 
-    def __init__(self, base_url: str, api_token: str) -> None:
+    def __init__(
+        self, base_url: str, api_token: str, timeout: Any = DEFAULT_TIMEOUT
+    ) -> None:
         self.base_url = base_url
         self.api_token = api_token
         self.access_token: str = None
+        self.timeout = timeout
 
     def authenticate(self) -> str:
         """Obtain a fresh access token."""
         url = self.base_url + "accounts/refresh/"
         try:
             resp = requests.post(
-                url, headers={"Authorization": f"Token {self.api_token}"}
+                url,
+                headers={"Authorization": f"Token {self.api_token}"},
+                timeout=self.timeout,
             )
             resp.raise_for_status()
         except requests.RequestException as exc:

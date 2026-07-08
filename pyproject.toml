@@ -11,7 +11,7 @@ license = {text = "MIT"}
 dependencies = ["requests>=2.20"]
 
 [project.optional-dependencies]
-dev = ["pytest", "responses"]
+dev = ["pytest", "responses", "bandit", "pre-commit"]
 
 [tool.setuptools.dynamic]
 version = {attr = "enrolhq._version.__version__"}

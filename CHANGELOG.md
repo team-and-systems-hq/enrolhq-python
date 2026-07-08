@@ -9,9 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`client.leads`** — full leads resource on the v2 API: `list()` /
+  `list_page()` (filters: `is_email_unique`, `has_student_profile`), `get()`,
+  `create()`, `update()` (PUT full-replacement), and `references()` for lead
+  references (`GET lead-references/`). Set `student_profile` to a profile UUID
+  to link a lead to an existing application. Replaces the legacy v1 Zapier
+  `POST /api/v1/leads/` integration.
+- **`client.leads.create_reference(name, slug=None)`** — create a lead
+  reference. There is no dedicated write endpoint, so it round-trips the
+  `school/` settings object (get -> append to `lead_references` -> put) and
+  returns the new record with its server-assigned `id`. Raises `ValueError`
+  on a duplicate slug.
+- `client.reference_data.lead_references()` — lead references alongside the
+  other lookup lists.
+- Example `15_leads.py` with a matching Examples Guide section (including
+  v1-Zapier migration notes), plus offline unit tests and read-only
+  integration tests for leads.
+- `bandit` security linting via pre-commit (`.pre-commit-config.yaml`);
+  `bandit` and `pre-commit` added to the `dev` extras.
 - Example `14_activity_log.py` and a matching Examples Guide section for the
   existing `client.activity_log` resource (uses a placeholder UUID).
 - Offline unit tests for `ActivityLogResource` (`list` / `list_page`).
+
+### Fixed
+
+- The token-refresh request in `TokenAuth` now applies the default `(10, 30)`
+  timeout (previously it could hang indefinitely). `EnrolHQClient(timeout=...)`
+  is now passed through to auth requests as well.
 
 ### Documentation
 

@@ -89,6 +89,51 @@ class TestApplications:
             client.applications.get("00000000-0000-0000-0000-000000000000")
 
 
+# ── Leads ───────────────────────────────────────────────────
+
+class TestLeads:
+    def test_list_page(self, client):
+        page = client.leads.list_page(page_size=5)
+        assert isinstance(page, PaginatedResponse)
+        assert isinstance(page.count, int)
+        if not page:
+            pytest.skip("No leads in this instance")
+        lead = page[0]
+        assert "id" in lead
+        assert "email" in lead
+        assert "student" in lead
+
+    def test_list_with_filters(self, client):
+        page = client.leads.list_page(
+            is_email_unique=False, has_student_profile=False, page_size=5
+        )
+        assert isinstance(page.count, int)
+
+    def test_get_lead(self, client):
+        page = client.leads.list_page(page_size=1)
+        if not page:
+            pytest.skip("No leads in this instance")
+        lead_id = page[0]["id"]
+        detail = client.leads.get(lead_id)
+        assert detail["id"] == lead_id
+        assert "residential_address" in detail
+
+    def test_get_nonexistent_raises_not_found(self, client):
+        with pytest.raises(NotFoundError):
+            client.leads.get("00000000-0000-0000-0000-000000000000")
+
+    def test_references(self, client):
+        refs = client.leads.references()
+        assert isinstance(refs, list)
+        if refs:
+            assert "id" in refs[0]
+            assert "name" in refs[0]
+            assert "slug" in refs[0]
+
+    def test_reference_data_alias(self, client):
+        assert client.reference_data.lead_references() == client.leads.references()
+
+
 # ── Pagination ──────────────────────────────────────────────
 
 class TestPagination:
