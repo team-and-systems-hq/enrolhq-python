@@ -9,6 +9,7 @@ from .documents import DocumentsResource
 from .email_log import EmailLogResource
 from .event_bookings import EventBookingsResource
 from .events import EventsResource
+from .leads import LeadsResource
 from .metafields import MetafieldsResource
 from .notes import NotesResource
 from .payments import PaymentsResource
@@ -25,6 +26,7 @@ __all__ = [
     "EmailLogResource",
     "EventBookingsResource",
     "EventsResource",
+    "LeadsResource",
     "MetafieldsResource",
     "NotesResource",
     "PaymentsResource",

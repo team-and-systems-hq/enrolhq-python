@@ -15,6 +15,7 @@ from .resources import (
     EmailLogResource,
     EventBookingsResource,
     EventsResource,
+    LeadsResource,
     MetafieldsResource,
     NotesResource,
     PaymentsResource,
@@ -96,10 +97,11 @@ class EnrolHQClient:
                 "Provide instance, base_url, or set ENROLHQ_BASE_URL / ENROLHQ_INSTANCE"
             )
 
-        auth = TokenAuth(self.base_url, api_token)
+        auth = TokenAuth(self.base_url, api_token, timeout=timeout)
         self._http = HttpClient(auth, timeout=timeout)
 
         self.applications = ApplicationsResource(self._http, self.base_url)
+        self.leads = LeadsResource(self._http, self.base_url)
         self.documents = DocumentsResource(self._http, self.base_url)
         self.notes = NotesResource(self._http, self.base_url)
         self.activity_log = ActivityLogResource(self._http, self.base_url)

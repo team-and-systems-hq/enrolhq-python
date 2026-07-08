@@ -376,6 +376,91 @@ print(f"{len(page)} of {page.count} entries")
 
 ---
 
+## 15 - Leads
+
+**File:** [`15_leads.py`](15_leads.py)
+
+Work with leads — pre-enquiry contacts captured before a full application
+exists (e.g. a "keep me updated" website form). A lead holds the contact
+(parent) details, an optional prospective student, an address, and a
+**lead reference** identifying which form/source it came from.
+
+All endpoints are on the v2 API: `leads/`, `leads/<id>/`, and
+`lead-references/`.
+
+```python
+client = EnrolHQClient()
+
+# Lead references — use a record's `id` as the lead's `reference` field
+for ref in client.leads.references():
+    print(ref["name"], ref["slug"], ref["id"])
+
+# Create a lead reference (slug defaults to a slugified name)
+ref = client.leads.create_reference("Open Day 2027", "open-day-2027")
+
+# List leads (auto-paginates); filters: is_email_unique, has_student_profile
+for lead in client.leads.list(has_student_profile=False):
+    print(lead["email"], lead["student"]["entry_year"] if lead["student"] else None)
+
+# Get one
+detail = client.leads.get("lead-uuid")
+
+# Create
+new_lead = client.leads.create({
+    "email": "jane.doe@example.com",
+    "title": "Mrs",
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "mobile_phone": "+61400000000",
+    "reference": "lead-reference-uuid",
+    "student": {
+        "first_name": "Sam", "last_name": "Doe", "dob": "2015-03-15",
+        "entry_grade": 7, "entry_year": 2028, "comment": "",
+        "questions": [], "questions_other": "",
+    },
+    "residential_address": {
+        "apartment": "", "street_address": "1 Example St", "city": "",
+        "suburb": "ULTIMO", "state": "NSW", "postcode": "2007", "country": None,
+    },
+    "how_hear": [],
+    "how_hear_other": "",
+    "student_profile": None,
+})
+
+# Update — PUT (full replacement): get -> modify -> update
+lead = client.leads.get(new_lead["id"])
+lead["student"]["comment"] = "Followed up by phone"
+client.leads.update(lead["id"], lead)
+```
+
+Key concepts:
+
+- **Linking to an application:** set `student_profile` to a student profile
+  UUID to attach the lead to an existing application/profile. `None` creates
+  a standalone lead. Filter linked/unlinked leads with
+  `has_student_profile=True/False`.
+- **Lead references** are configured per school (also visible in the
+  `school/` payload under `lead_references`). Also available as
+  `client.reference_data.lead_references()`.
+- **`create_reference()`** has no dedicated API endpoint — it round-trips
+  the `school/` settings object (get -> append to `lead_references` -> put)
+  and returns the new record with its server-assigned `id`. It raises
+  `ValueError` if the slug already exists.
+- `update()` is a PUT, not a PATCH — send the complete lead object.
+
+> **Migrating from the legacy v1 Zapier integration:** the old Zap POSTed to
+> `/api/v1/leads/` with `X-API-TOKEN` / `X-ENROLHQ-DOMAIN` headers.
+> `client.leads.create()` replaces it — authentication is handled by the SDK
+> (token refresh against v2), and the payload fields map 1:1
+> (`email`, `title`, `first_name`, `last_name`, `mobile_phone`, `reference`,
+> `student`, `residential_address`). The v1-only flag
+> `is_lead_submitted_system_event_should_be_dispatched` is not part of the
+> v2 payload — drop it.
+
+> **Warning:** `create()` / `update()` write real data to your instance.
+
+---
+
 ## Error Handling
 
 All examples will raise clear exceptions on failure:

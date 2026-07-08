@@ -168,9 +168,10 @@ def test_client_repr():
 def test_client_has_all_resources():
     c = EnrolHQClient(instance="x", api_token="tok")
     for attr in [
-        "applications", "documents", "notes", "activity_log", "email_log",
-        "events", "event_bookings", "payments", "staff", "analytics",
-        "reference_data", "audit_log", "cms_settings", "metafields",
+        "applications", "leads", "documents", "notes", "activity_log",
+        "email_log", "events", "event_bookings", "payments", "staff",
+        "analytics", "reference_data", "audit_log", "cms_settings",
+        "metafields",
     ]:
         assert hasattr(c, attr), f"Missing resource: {attr}"
 
@@ -289,20 +290,31 @@ def test_paginated_iterator_rejects_bad_page_size():
 class _FakeResponse:
     def __init__(self, payload):
         self._payload = payload
+        self.content = b"" if payload is None else b"x"
 
     def json(self):
         return self._payload
 
 
 class _FakeHttp:
-    """Records GET calls and returns queued JSON payloads in order."""
+    """Records calls and returns queued JSON payloads in order."""
 
     def __init__(self, *payloads):
         self._payloads = list(payloads)
         self.calls = []  # list of (url, params)
+        self.posts = []  # list of (url, json)
+        self.puts = []  # list of (url, json)
 
     def get(self, url, params=None, **kwargs):
         self.calls.append((url, params))
+        return _FakeResponse(self._payloads.pop(0))
+
+    def post(self, url, json=None, params=None, **kwargs):
+        self.posts.append((url, json))
+        return _FakeResponse(self._payloads.pop(0))
+
+    def put(self, url, json=None, **kwargs):
+        self.puts.append((url, json))
         return _FakeResponse(self._payloads.pop(0))
 
 
@@ -478,3 +490,150 @@ def test_reference_data_application_status_settings():
     result = res.application_status_settings()
     assert result == rows
     assert http.calls[0][0] == BASE + "application-status-settings/"
+
+
+# ── LeadsResource ───────────────────────────────────────────
+
+def test_leads_list_forwards_filters():
+    from enrolhq.pagination import PaginatedIterator
+    from enrolhq.resources.leads import LeadsResource
+    http = _FakeHttp({"results": [{"id": "l1"}], "next": None})
+    res = LeadsResource(http, BASE)
+    it = res.list(is_email_unique=False, has_student_profile=True, page_size=25)
+    assert isinstance(it, PaginatedIterator)
+    list(it)  # consume to trigger the request
+    url, params = http.calls[0]
+    assert url == BASE + "leads/"
+    assert params["is_email_unique"] is False
+    assert params["has_student_profile"] is True
+    assert params["page_size"] == 25
+
+
+def test_leads_list_page():
+    from enrolhq.resources.leads import LeadsResource
+    http = _FakeHttp({"count": 10, "results": [{"id": "l1"}], "next": None})
+    res = LeadsResource(http, BASE)
+    page = res.list_page(page=2, page_size=25)
+    url, params = http.calls[0]
+    assert url == BASE + "leads/"
+    assert params["page"] == 2
+    assert params["page_size"] == 25
+    assert page.count == 10
+
+
+def test_leads_get():
+    from enrolhq.resources.leads import LeadsResource
+    payload = {"id": "l1", "email": "parent@example.com"}
+    http = _FakeHttp(payload)
+    res = LeadsResource(http, BASE)
+    assert res.get("l1") == payload
+    assert http.calls[0][0] == BASE + "leads/l1/"
+
+
+def test_leads_create():
+    from enrolhq.resources.leads import LeadsResource
+    created = {"id": "new-lead", "email": "parent@example.com"}
+    http = _FakeHttp(created)
+    res = LeadsResource(http, BASE)
+    data = {"email": "parent@example.com", "student_profile": "profile-uuid"}
+    assert res.create(data) == created
+    url, body = http.posts[0]
+    assert url == BASE + "leads/"
+    assert body == data
+
+
+def test_leads_update_is_put():
+    from enrolhq.resources.leads import LeadsResource
+    updated = {"id": "l1", "first_name": "Edited"}
+    http = _FakeHttp(updated)
+    res = LeadsResource(http, BASE)
+    assert res.update("l1", updated) == updated
+    url, body = http.puts[0]
+    assert url == BASE + "leads/l1/"
+    assert body == updated
+
+
+def test_leads_references():
+    from enrolhq.resources.leads import LeadsResource
+    rows = [{"id": "ref-1", "name": "Keep Updated", "slug": "keep-updated"}]
+    http = _FakeHttp({"results": rows, "next": None})
+    res = LeadsResource(http, BASE)
+    assert res.references() == rows
+    url, params = http.calls[0]
+    assert url == BASE + "lead-references/"
+    assert params["page_size"] == 1000
+
+
+def test_reference_data_lead_references():
+    from enrolhq.resources.reference_data import ReferenceDataResource
+    rows = [{"id": "ref-1", "name": "Keep Updated"}]
+    http = _FakeHttp({"results": rows, "next": None})
+    res = ReferenceDataResource(http, BASE)
+    assert res.lead_references() == rows
+    assert http.calls[0][0] == BASE + "lead-references/"
+
+
+# ── LeadsResource.create_reference ──────────────────────────
+
+def _school():
+    """Fresh school payload per test — create_reference mutates the dict it
+    receives, and _FakeHttp returns objects by reference (real HTTP parses
+    fresh JSON each call)."""
+    return {
+        "name": "Test School",
+        "lead_references": [
+            {"id": "ref-1", "name": "Keep Updated", "slug": "keep-updated"},
+        ],
+    }
+
+
+def test_create_reference_round_trips_school():
+    from enrolhq.resources.leads import LeadsResource
+    created = {"id": "ref-2", "name": "Open Day", "slug": "open-day"}
+    http = _FakeHttp(
+        _school(),  # GET school/
+        {},  # PUT school/
+        {"results": [_school()["lead_references"][0], created], "next": None},
+    )
+    res = LeadsResource(http, BASE)
+    assert res.create_reference("Open Day", "open-day") == created
+    assert http.calls[0][0] == BASE + "school/"
+    url, body = http.puts[0]
+    assert url == BASE + "school/"
+    assert body["lead_references"][-1] == {
+        "name": "Open Day",
+        "slug": "open-day",
+        "confirmation_redirect_url": "",
+        "is_removable": True,
+    }
+    # Existing references are preserved in the PUT body.
+    assert body["lead_references"][0]["id"] == "ref-1"
+    assert http.calls[1][0] == BASE + "lead-references/"
+
+
+def test_create_reference_derives_slug_from_name():
+    from enrolhq.resources.leads import LeadsResource
+    created = {"id": "ref-2", "name": "Open Day 2027!", "slug": "open-day-2027"}
+    http = _FakeHttp(_school(), {}, {"results": [created], "next": None})
+    res = LeadsResource(http, BASE)
+    assert res.create_reference("Open Day 2027!") == created
+    _, body = http.puts[0]
+    assert body["lead_references"][-1]["slug"] == "open-day-2027"
+
+
+def test_create_reference_rejects_duplicate_slug():
+    from enrolhq.resources.leads import LeadsResource
+    http = _FakeHttp(_school())
+    res = LeadsResource(http, BASE)
+    with pytest.raises(ValueError, match="keep-updated"):
+        res.create_reference("Keep Updated", "keep-updated")
+    assert http.puts == []  # nothing written
+
+
+def test_create_reference_raises_if_missing_after_save():
+    from enrolhq import EnrolHQError
+    from enrolhq.resources.leads import LeadsResource
+    http = _FakeHttp(_school(), {}, {"results": [], "next": None})
+    res = LeadsResource(http, BASE)
+    with pytest.raises(EnrolHQError, match="open-day"):
+        res.create_reference("Open Day", "open-day")

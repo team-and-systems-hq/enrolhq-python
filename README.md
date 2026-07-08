@@ -96,6 +96,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Resource | Access | Operations |
 |----------|--------|------------|
 | Applications | `client.applications` | list, get, create, update, count, actions, bulk ops |
+| Leads | `client.leads` | list, get, create, update, references, create_reference |
 | Documents | `client.documents` | list, upload, download, delete |
 | Notes | `client.notes` | list, create |
 | Activity Log | `client.activity_log` | list, create |
