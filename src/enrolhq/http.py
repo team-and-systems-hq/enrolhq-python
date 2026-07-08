@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 
 import requests
 
-from .auth import TokenAuth
+from .auth import DEFAULT_TIMEOUT, TokenAuth
 from .exceptions import (
     APIError,
     AuthenticationError,
@@ -16,9 +16,6 @@ from .exceptions import (
     RateLimitError,
     ValidationError,
 )
-
-#: Default request timeout in seconds (connect, read).
-DEFAULT_TIMEOUT = (10, 30)
 
 _ERROR_MAP = {
     400: ValidationError,
