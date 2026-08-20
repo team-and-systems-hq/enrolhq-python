@@ -11,6 +11,8 @@ tests will fail. The unit tests in ``test_unit.py`` need no credentials and run
 fully offline.
 """
 
+import itertools
+
 import pytest
 
 from enrolhq import (
@@ -90,6 +92,145 @@ class TestApplications:
 
 
 # ── Leads ───────────────────────────────────────────────────
+
+class TestApplicationNestedData:
+    """Nested data that exists on the detail serializer only."""
+
+    def _first_application_id(self, client):
+        page = client.applications.list_page(page_size=1)
+        if not page:
+            pytest.skip("No applications in this instance")
+        return page[0]["id"]
+
+    def test_list_serializer_omits_emergency_contacts(self, client):
+        page = client.applications.list_page(page_size=1)
+        if not page:
+            pytest.skip("No applications in this instance")
+        # This is why list-based exports appear to be missing the data.
+        assert "emergency_contacts" not in page[0]
+        assert "medical_data" not in page[0]
+
+    def test_detail_serializer_includes_them(self, client):
+        detail = client.applications.get(self._first_application_id(client))
+        assert "emergency_contacts" in detail
+        assert "medical_data" in detail
+        assert "custom_form_submits" in detail
+
+    def test_emergency_contacts_accessor(self, client):
+        contacts = client.applications.emergency_contacts(
+            self._first_application_id(client)
+        )
+        assert isinstance(contacts, list)
+        for contact in contacts:
+            assert "first_name" in contact
+            assert "relationship_to_student" in contact
+
+    def test_medical_data_accessor(self, client):
+        assert isinstance(
+            client.applications.medical_data(self._first_application_id(client)),
+            dict,
+        )
+
+    def test_submits_for_application_annotates_form_id(self, client):
+        app_id = self._first_application_id(client)
+        for submit in client.forms.submits_for_application(app_id):
+            assert submit["application_id"] == app_id
+            assert submit["form_id"]
+            assert "payload" in submit
+
+
+class TestForms:
+    def test_list_forms(self, client):
+        page = client.forms.list_page(page_size=5)
+        assert isinstance(page, PaginatedResponse)
+        if not page:
+            pytest.skip("No forms in this instance")
+        form = page[0]
+        assert "id" in form
+        assert "title" in form
+        assert "form_slug" in form
+        assert "kind" in form
+
+    def test_published_forms(self, client):
+        forms = list(client.forms.published(page_size=5))
+        for form in forms:
+            # The parent-facing serializer carries the audience rules.
+            assert "allowed_entry_years" in form
+            assert "allowed_application_statuses" in form
+
+    def test_get_form_by_slug(self, client):
+        forms = list(client.forms.published(page_size=1))
+        if not forms:
+            pytest.skip("No published forms in this instance")
+        slug = forms[0]["form_slug"]
+        assert client.forms.get(slug)["form_slug"] == slug
+
+    def test_find_returns_none_for_unknown(self, client):
+        assert client.forms.find("no-such-form-xyz") is None
+
+    def test_submits_page(self, client):
+        page = client.forms.submits_page(page_size=5)
+        assert isinstance(page.count, int)
+        if not page:
+            pytest.skip("No form submits in this instance")
+        submit = page[0]
+        assert "form_id" in submit
+        assert "completed_at" in submit
+        assert "student_profile" in submit
+
+    def test_submits_form_filter_narrows_results(self, client):
+        page = client.forms.submits_page(page_size=1)
+        if not page:
+            pytest.skip("No form submits in this instance")
+        total = page.count
+        # The filter is `form`, not `form_id` — `form_id` is silently ignored.
+        filtered = client.forms.submits_page(
+            form=page[0]["form_id"], page_size=1
+        )
+        assert filtered.count <= total
+
+    def test_submits_summary_omits_submit_id(self, client):
+        """The list endpoint gives no submit id — hence iter_answers()."""
+        page = client.forms.submits_page(page_size=5)
+        if not page:
+            pytest.skip("No form submits in this instance")
+        assert all("id" not in submit for submit in page)
+        assert all(submit["student_profile"]["id"] for submit in page)
+
+    def test_get_submit_and_answers(self, client):
+        page = client.forms.submits_page(is_completed=True, page_size=1)
+        if not page:
+            pytest.skip("No completed form submits in this instance")
+        # The summary has no submit id, so resolve it via the application.
+        profile_id = page[0]["student_profile"]["id"]
+        submits = client.forms.submits_for_application(profile_id)
+        if not submits:
+            pytest.skip("No submits on the application detail")
+        detail = client.forms.get_submit(submits[0]["id"])
+        assert "payload" in detail
+        assert "form_schema" in detail
+        for answer in client.forms.answers_from(detail):
+            assert {"section", "name", "label", "element_type", "value"} <= set(
+                answer
+            )
+
+    def test_iter_answers_yields_labelled_records(self, client):
+        records = list(
+            itertools.islice(client.forms.iter_answers(is_completed=True), 2)
+        )
+        if not records:
+            pytest.skip("No completed form submits in this instance")
+        for record in records:
+            assert record["submit_id"]
+            assert record["student_profile"]["id"]
+            for answer in record["answers"]:
+                assert "label" in answer
+                assert "element_type" in answer
+
+    def test_get_nonexistent_submit_raises_not_found(self, client):
+        with pytest.raises(NotFoundError):
+            client.forms.get_submit("00000000-0000-0000-0000-000000000000")
+
 
 class TestLeads:
     def test_list_page(self, client):

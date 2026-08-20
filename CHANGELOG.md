@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`client.forms`** — custom forms and parent submissions, the home of
+  photo/video permission and consent answers. Form definitions via `list()` /
+  `list_page()` (`GET forms/staff/`), `published()` (`GET forms/`, includes
+  audience rules), `get(form_slug)` and `find(title_or_slug)`. Submissions via
+  `submits()` / `submits_page()` (`GET forms/staff-submits/`; filters: `form`,
+  `entry_year`, `entry_grade`, `application_statuses`, `is_completed`),
+  `get_submit()`, `submits_for_application()`, `update_submit()`,
+  `reopen_submit()` and `export_submits()` (CSV, one flat row per submission).
+- **`client.forms.answers()` / `answers_from()` / `consents()`** — join a
+  submission's `payload` against its form schema so answers carry the question
+  text the parent saw, instead of opaque keys like `group_3_social_media`.
+  `consents()` narrows this to the yes/no permission answers.
+- **`client.forms.iter_answers()` / `answers_for_application()`** — labelled
+  answers in bulk. The `forms/staff-submits/` list omits each submit's own
+  id, so its records cannot be passed to `get_submit()`; these resolve the
+  submit ids via the application detail (one request per application).
+- **`client.applications.emergency_contacts()`, `.medical_data()`,
+  `.guardians()`** — convenience accessors for nested data that exists on the
+  application *detail* serializer only. `applications.list()` returns a
+  summary serializer that omits these fields, which is why they appear absent
+  from list-based exports.
 - **`client.leads`** — full leads resource on the v2 API: `list()` /
   `list_page()` (filters: `is_email_unique`, `has_student_profile`), `get()`,
   `create()`, `update()` (PUT full-replacement), and `references()` for lead

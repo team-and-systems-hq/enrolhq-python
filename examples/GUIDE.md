@@ -461,6 +461,56 @@ Key concepts:
 
 ---
 
+## 16 - Emergency Contacts and Consents
+
+**File:** [`16_emergency_contacts_and_consents.py`](16_emergency_contacts_and_consents.py)
+
+The two things most often reported as "missing from the API". Neither is —
+they just aren't where a list-based export looks.
+
+**Emergency contacts, medical data and guardians** are on the application
+*detail* serializer only. `applications.list()` returns a lighter summary
+serializer that omits them, so iterating the list endpoint never surfaces
+them regardless of the filters you pass.
+
+**Photo/video consents** aren't application fields at all. They're answers on
+a *custom form* the parent submits, stored in that submission's `payload` and
+reached through `client.forms` — the same data behind the dashboard's
+`/dashboard/reports/form-submits/` report.
+
+```python
+client = EnrolHQClient()
+
+# Detail-only nested data
+client.applications.emergency_contacts(application_id)
+client.applications.medical_data(application_id)
+client.applications.guardians(application_id)
+
+# Find the consent form, then read one application's answers
+form = client.forms.find("photo-permission")     # by title or slug
+for submit in client.forms.submits_for_application(application_id, form=form["id"]):
+    for name, answer in client.forms.consents(submit["id"]).items():
+        print(answer["label"], answer["value"])
+
+# Bulk, structured
+for record in client.forms.iter_answers(form=form["id"], is_completed=True):
+    print(record["student_profile"]["last_name"], record["answers"])
+
+# Bulk, one request — student, emergency contacts and consents per row
+client.forms.export_submits("consents.csv", form=form["id"], is_completed=True)
+```
+
+Two API quirks the SDK works around:
+
+- The submits filter is `form`, not `form_id` — passing `form_id` is silently
+  ignored and you get every submission back.
+- `forms/staff-submits/` summary records carry `student_profile` but **not**
+  the submit's own id, so they can't be fed to `get_submit()`.
+  `iter_answers()` and `submits_for_application()` resolve ids via the
+  application detail; the latter also annotates each submit with `form_id`
+  and `application_id` (the detail's `form_schema.id` is a schema *version*
+  id, not the form id).
+
 ## Error Handling
 
 All examples will raise clear exceptions on failure:

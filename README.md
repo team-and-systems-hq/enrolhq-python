@@ -97,6 +97,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 |----------|--------|------------|
 | Applications | `client.applications` | list, get, create, update, count, actions, bulk ops |
 | Leads | `client.leads` | list, get, create, update, references, create_reference |
+| Forms | `client.forms` | list, get, find, submits, get_submit, answers, consents, iter_answers, export_submits |
 | Documents | `client.documents` | list, upload, download, delete |
 | Notes | `client.notes` | list, create |
 | Activity Log | `client.activity_log` | list, create |
@@ -110,6 +111,55 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Reference Data | `client.reference_data` | campuses, countries, languages, application_status_settings, etc. |
 | CMS Settings | `client.cms_settings` | get |
 | Metafields | `client.metafields` | get, field_settings, default_field_settings |
+
+## Emergency contacts, medical data and consents
+
+Two things are commonly reported as "missing from the API". Neither is:
+
+**Emergency contacts, medical data and guardians** are on the application
+*detail* serializer only. `applications.list()` returns a lighter summary
+serializer that omits them, so iterating the list endpoint never surfaces
+them:
+
+```python
+# Not there — list() returns the summary serializer
+app = next(iter(client.applications.list(page_size=1)))
+"emergency_contacts" in app          # False
+
+# There — detail serializer
+client.applications.emergency_contacts(application_id)
+client.applications.medical_data(application_id)
+client.applications.guardians(application_id)
+```
+
+**Photo/video consents** are not application fields at all — they are answers
+on a custom form, stored in that submission's `payload`:
+
+```python
+form = client.forms.find("photo-permission")          # by title or slug
+for submit in client.forms.submits_for_application(app_id, form=form["id"]):
+    for name, answer in client.forms.consents(submit["id"]).items():
+        print(answer["label"], answer["value"])
+```
+
+For a bulk load, the CSV export flattens student details, emergency contacts
+and every consent answer into one row per submission — in a single request:
+
+```python
+client.forms.export_submits("consents.csv", form=form["id"], is_completed=True)
+```
+
+If you want structured JSON instead, use `iter_answers()`. Note that the
+`submits()` summary records carry `student_profile` but **not** the submit's
+own id, so they can't be passed to `get_submit()`; `iter_answers()` resolves
+that for you at the cost of one request per application:
+
+```python
+for record in client.forms.iter_answers(form=form["id"], is_completed=True):
+    print(record["student_profile"]["last_name"], record["answers"])
+```
+
+See [`examples/16_emergency_contacts_and_consents.py`](examples/16_emergency_contacts_and_consents.py).
 
 ## Error handling
 

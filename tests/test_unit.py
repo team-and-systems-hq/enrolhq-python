@@ -637,3 +637,224 @@ def test_create_reference_raises_if_missing_after_save():
     res = LeadsResource(http, BASE)
     with pytest.raises(EnrolHQError, match="open-day"):
         res.create_reference("Open Day", "open-day")
+
+
+# ── Forms ───────────────────────────────────────────────────
+
+def _submit():
+    """A form submit shaped like the real staff-submits detail response."""
+    return {
+        "id": "submit-1",
+        "completed_at": "2026-08-20T09:39:21+10:00",
+        "form_schema": {
+            "id": "schema-version-1",  # NOT the form id
+            "schema": [
+                {
+                    "title": "Emergency Contacts",
+                    "elements": [
+                        {"name": "intro", "element_type": "HTML",
+                         "content": "<p>hi</p>"},
+                        {"name": "contacts_of_emergency_1",
+                         "element_type": "EMERGENCY_CONTACTS"},
+                    ],
+                },
+                {
+                    "title": "Photograph/Video Permission Form",
+                    "elements": [
+                        {"name": "group_3_social_media", "label": "Group 3: Social Media",
+                         "element_type": "RADIO", "options": ["Yes", "No"]},
+                        {"name": "notes", "label": " Anything else? ",
+                         "element_type": "TEXT"},
+                    ],
+                },
+            ],
+        },
+        "initial_payload": {
+            "contacts_of_emergency_1": [{"first_name": "Ada"}],
+            "group_3_social_media": "",
+            "notes": "",
+        },
+        "payload": {"group_3_social_media": "Yes"},
+    }
+
+
+def test_answers_from_labels_and_overlays_payload():
+    from enrolhq.resources.forms import FormsResource
+    answers = FormsResource.answers_from(_submit())
+
+    # HTML content elements are skipped.
+    assert [a["name"] for a in answers] == [
+        "contacts_of_emergency_1", "group_3_social_media", "notes",
+    ]
+    by_name = {a["name"]: a for a in answers}
+
+    # payload wins over initial_payload
+    assert by_name["group_3_social_media"]["value"] == "Yes"
+    assert by_name["group_3_social_media"]["label"] == "Group 3: Social Media"
+    assert by_name["group_3_social_media"]["section"] == (
+        "Photograph/Video Permission Form"
+    )
+
+    # initial_payload fills in what payload doesn't carry
+    assert by_name["contacts_of_emergency_1"]["value"] == [{"first_name": "Ada"}]
+    assert by_name["contacts_of_emergency_1"]["is_profile_backed"] is True
+    assert by_name["notes"]["is_profile_backed"] is False
+    assert by_name["notes"]["label"] == "Anything else?"  # stripped
+
+
+def test_answers_from_handles_missing_schema_and_payloads():
+    from enrolhq.resources.forms import FormsResource
+    assert FormsResource.answers_from({}) == []
+    assert FormsResource.answers_from(
+        {"form_schema": {"schema": []}, "payload": None, "initial_payload": None}
+    ) == []
+
+
+def test_consents_returns_only_choice_elements():
+    from enrolhq.resources.forms import FormsResource
+    http = _FakeHttp(_submit())
+    res = FormsResource(http, BASE)
+    assert res.consents("submit-1") == {
+        "group_3_social_media": {
+            "label": "Group 3: Social Media", "value": "Yes",
+        }
+    }
+    assert http.calls[0][0] == BASE + "forms/staff-submits/submit-1/"
+
+
+def test_submits_for_application_annotates_form_and_application_id():
+    from enrolhq.resources.forms import FormsResource
+    application = {
+        "custom_form_submits": [
+            {"id": "submit-1", "form": "form-a", "completed_at": "x"},
+            {"id": "submit-2", "form": "form-b", "completed_at": "y"},
+        ]
+    }
+    http = _FakeHttp(application, _submit(), _submit())
+    res = FormsResource(http, BASE)
+    submits = res.submits_for_application("app-1")
+
+    assert [s["form_id"] for s in submits] == ["form-a", "form-b"]
+    assert {s["application_id"] for s in submits} == {"app-1"}
+    assert http.calls[0][0] == BASE + "applications/app-1/"
+    assert http.calls[1][0] == BASE + "forms/staff-submits/submit-1/"
+
+
+def test_submits_for_application_filters_by_form():
+    from enrolhq.resources.forms import FormsResource
+    application = {
+        "custom_form_submits": [
+            {"id": "submit-1", "form": "form-a"},
+            {"id": "submit-2", "form": "form-b"},
+        ]
+    }
+    http = _FakeHttp(application, _submit())
+    res = FormsResource(http, BASE)
+    submits = res.submits_for_application("app-1", form="form-b")
+
+    assert len(submits) == 1
+    assert submits[0]["form_id"] == "form-b"
+    # Only the matching submit was fetched.
+    assert len(http.calls) == 2
+    assert http.calls[1][0] == BASE + "forms/staff-submits/submit-2/"
+
+
+def test_find_matches_title_or_slug_case_insensitively():
+    from enrolhq.resources.forms import FormsResource
+    forms = {
+        "results": [
+            {"id": "1", "title": "Enquiry", "form_slug": "stub-enquiry-form"},
+            {"id": "2", "title": "Photo Permission", "form_slug": "photo-perm"},
+        ],
+        "next": None,
+    }
+    res = FormsResource(_FakeHttp(forms), BASE)
+    assert res.find("photo permission")["id"] == "2"
+    res = FormsResource(_FakeHttp(forms), BASE)
+    assert res.find("PHOTO-PERM")["id"] == "2"
+    res = FormsResource(_FakeHttp(forms), BASE)
+    assert res.find("nope") is None
+
+
+def test_client_exposes_forms_resource():
+    from enrolhq.resources import FormsResource
+    client = EnrolHQClient(instance="demo", api_token="t")
+    assert isinstance(client.forms, FormsResource)
+
+
+def test_application_nested_accessors_use_detail_endpoint():
+    from enrolhq.resources.applications import ApplicationsResource
+    detail = {
+        "emergency_contacts": [{"first_name": "Ada"}],
+        "medical_data": {"medicare_number": "123"},
+        "guardians": [],
+    }
+    http = _FakeHttp(detail, detail, detail)
+    res = ApplicationsResource(http, BASE)
+    assert res.emergency_contacts("app-1") == [{"first_name": "Ada"}]
+    assert res.medical_data("app-1") == {"medicare_number": "123"}
+    assert res.guardians("app-1") == []
+    assert all(url == BASE + "applications/app-1/" for url, _ in http.calls)
+
+
+def test_application_nested_accessors_default_when_absent():
+    from enrolhq.resources.applications import ApplicationsResource
+    http = _FakeHttp({}, {}, {})
+    res = ApplicationsResource(http, BASE)
+    assert res.emergency_contacts("app-1") == []
+    assert res.medical_data("app-1") == {}
+    assert res.guardians("app-1") == []
+
+
+def test_answers_for_application_shapes_records():
+    from enrolhq.resources.forms import FormsResource
+    application = {"custom_form_submits": [{"id": "submit-1", "form": "form-a"}]}
+    http = _FakeHttp(application, _submit())
+    res = FormsResource(http, BASE)
+    records = res.answers_for_application("app-1")
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["submit_id"] == "submit-1"
+    assert record["form_id"] == "form-a"
+    assert record["completed_at"] == "2026-08-20T09:39:21+10:00"
+    assert [a["name"] for a in record["answers"]] == [
+        "contacts_of_emergency_1", "group_3_social_media", "notes",
+    ]
+
+
+def test_iter_answers_dedupes_profiles_and_attaches_student():
+    from enrolhq.resources.forms import FormsResource
+    # The submits list carries student_profile but no submit id, so
+    # iter_answers must resolve ids via the application detail.
+    profile = {"id": "app-1", "first_name": "Ada", "last_name": "L"}
+    listing = {
+        "results": [
+            {"form_id": "form-a", "student_profile": profile},
+            {"form_id": "form-a", "student_profile": profile},  # same profile
+            {"form_id": "form-a", "student_profile": {}},  # no id -> skipped
+        ],
+        "next": None,
+    }
+    application = {"custom_form_submits": [{"id": "submit-1", "form": "form-a"}]}
+    http = _FakeHttp(listing, application, _submit())
+    res = FormsResource(http, BASE)
+    records = list(res.iter_answers(form="form-a"))
+
+    # One record: the duplicate profile and the id-less row are both skipped.
+    assert len(records) == 1
+    assert records[0]["student_profile"] == profile
+    assert records[0]["submit_id"] == "submit-1"
+    assert http.calls[1][0] == BASE + "applications/app-1/"
+
+
+def test_submits_passes_filters_through():
+    from enrolhq.resources.forms import FormsResource
+    http = _FakeHttp({"results": [], "next": None})
+    res = FormsResource(http, BASE)
+    list(res.submits(form="form-a", entry_year=2027, is_completed=True))
+    url, params = http.calls[0]
+    assert url == BASE + "forms/staff-submits/"
+    assert params["form"] == "form-a"
+    assert params["entry_year"] == 2027
+    assert params["is_completed"] is True

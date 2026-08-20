@@ -38,6 +38,37 @@ class ApplicationsResource(BaseResource):
         """Get full detail for a single application."""
         return self._get(f"applications/{application_id}/")
 
+    # ── Nested profile data ─────────────────────────────────────
+    #
+    # These live on the detail serializer only. `list()` returns a summary
+    # serializer that omits them, which is why a list-based export appears to
+    # be missing emergency contacts and medical data entirely.
+
+    def emergency_contacts(self, application_id: str) -> List[Dict[str, Any]]:
+        """Return the application's emergency contacts.
+
+        Each contact has ``id``, ``title``, ``first_name``, ``last_name``,
+        ``relationship_to_student``, ``home_phone``, ``mobile_phone``,
+        ``business_phone``, ``external_id`` and ``updated_at``.
+
+        Not available from :meth:`list` — this fetches the detail record.
+        """
+        return self.get(application_id).get("emergency_contacts", [])
+
+    def medical_data(self, application_id: str) -> Dict[str, Any]:
+        """Return the application's medical data (doctor, medicare, conditions).
+
+        Not available from :meth:`list` — this fetches the detail record.
+        """
+        return self.get(application_id).get("medical_data", {})
+
+    def guardians(self, application_id: str) -> List[Dict[str, Any]]:
+        """Return the application's guardians.
+
+        Not available from :meth:`list` — this fetches the detail record.
+        """
+        return self.get(application_id).get("guardians", [])
+
     # ── Create / Update ─────────────────────────────────────────
 
     def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
