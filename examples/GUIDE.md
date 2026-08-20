@@ -511,6 +511,50 @@ Two API quirks the SDK works around:
   and `application_id` (the detail's `form_schema.id` is a schema *version*
   id, not the form id).
 
+## 17 - Custom Form Answers
+
+**File:** [`17_custom_form_answers.py`](17_custom_form_answers.py)
+
+Discovery-driven walkthrough with **no hardcoded ids** — every UUID is found
+at runtime:
+
+    list the custom forms
+      -> pick one
+        -> find a student who submitted it
+          -> read that student's answers
+
+Runs as-is against any instance. Set `FORM_NAME` to a form's title or slug to
+target a specific form instead of the busiest one.
+
+```python
+client = EnrolHQClient()
+
+# 1. Which custom forms exist? (`kind == "CUSTOM"` excludes the built-in stubs)
+forms = [f for f in client.forms.list(page_size=100) if f["kind"] == "CUSTOM"]
+
+# 2. Pick one — by name, or whichever has the most completed submissions
+form = client.forms.find("photo-permission") or forms[0]
+
+# 3. Find a student who submitted it. Note the summary record carries
+#    `student_profile` but NOT the submit's own id.
+page = client.forms.submits_page(form=form["id"], is_completed=True, page_size=1)
+profile_id = page[0]["student_profile"]["id"]
+
+# 4. Read their answers, labelled from the form's own schema
+for record in client.forms.answers_for_application(profile_id, form=form["id"]):
+    for answer in record["answers"]:
+        print(answer["section"], answer["label"], answer["value"])
+```
+
+`submits_page(..., page_size=1).count` is the cheapest way to count
+submissions — the response carries the total, so you never page through them.
+
+Answer values are not all scalars. `is_profile_backed` elements carry
+structured data: `EMERGENCY_CONTACTS` is a list, `MEDICAL_DATA` a dict, and a
+`DOCUMENTS` element is a document *group* whose files live under its
+`documents` key — `len()` on the group itself counts its fields, not its
+files.
+
 ## Error Handling
 
 All examples will raise clear exceptions on failure:

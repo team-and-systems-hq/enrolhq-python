@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answers in bulk. The `forms/staff-submits/` list omits each submit's own
   id, so its records cannot be passed to `get_submit()`; these resolve the
   submit ids via the application detail (one request per application).
+- **`examples/17_custom_form_answers.py`** — discovery-driven example with no
+  hardcoded ids: list custom forms, pick one, find a student who submitted
+  it, and read their labelled answers.
 - **`client.applications.emergency_contacts()`, `.medical_data()`,
   `.guardians()`** — convenience accessors for nested data that exists on the
   application *detail* serializer only. `applications.list()` returns a

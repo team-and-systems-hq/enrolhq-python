@@ -258,6 +258,12 @@ class FormsResource(BaseResource):
         Layout-only elements (HTML blocks, dividers) are skipped. Elements
         flagged ``is_profile_backed`` are copies of profile data taken when the
         form was opened — read the application detail for their current value.
+
+        ``value`` is not always a scalar. ``EMERGENCY_CONTACTS`` is a list of
+        contacts, ``MEDICAL_DATA`` a dict, checkbox groups a list of selected
+        options, and a ``DOCUMENTS`` element is a document *group* whose files
+        live under its ``documents`` key — ``len()`` on the group counts its
+        fields, not its files.
         """
         return self.answers_from(self.get_submit(submit_id))
 
