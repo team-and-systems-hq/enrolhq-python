@@ -15,6 +15,7 @@ from .resources import (
     EmailLogResource,
     EventBookingsResource,
     EventsResource,
+    FormsResource,
     LeadsResource,
     MetafieldsResource,
     NotesResource,
@@ -102,6 +103,7 @@ class EnrolHQClient:
 
         self.applications = ApplicationsResource(self._http, self.base_url)
         self.leads = LeadsResource(self._http, self.base_url)
+        self.forms = FormsResource(self._http, self.base_url)
         self.documents = DocumentsResource(self._http, self.base_url)
         self.notes = NotesResource(self._http, self.base_url)
         self.activity_log = ActivityLogResource(self._http, self.base_url)
