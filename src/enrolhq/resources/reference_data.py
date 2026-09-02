@@ -61,6 +61,26 @@ class ReferenceDataResource(BaseResource):
         """List all timezones."""
         return self._get_all("dictionaries/timezones/")
 
+    def interview_categories(self) -> List[Dict[str, Any]]:
+        """List interview categories.
+
+        These live on the school settings object as ``profile_priorities``
+        rather than behind their own endpoint. Each record has ``id``,
+        ``name``, ``is_enabled`` and ``weight_score``; the ``id`` is what
+        appears in an application's ``interview_categories``.
+        """
+        return self._get("school/").get("profile_priorities", [])
+
+    def sibling_statuses(self) -> List[Dict[str, Any]]:
+        """List sibling statuses.
+
+        Like :meth:`interview_categories` these live on the school settings
+        object, as ``siblings_statuses``. Each record has ``id``, ``label``
+        and ``is_enabled``; the ``id`` is what appears as a sibling's
+        ``status``. Note these are named by ``label``, not ``name``.
+        """
+        return self._get("school/").get("siblings_statuses", [])
+
     def lead_references(self) -> List[Dict[str, Any]]:
         """List lead references (also available as ``client.leads.references()``)."""
         return self._get_all("lead-references/")

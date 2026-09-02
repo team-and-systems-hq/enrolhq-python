@@ -91,6 +91,54 @@ class TestApplications:
             client.applications.get("00000000-0000-0000-0000-000000000000")
 
 
+# ── Field schema and lookup (read-only) ─────────────────────
+
+class TestFieldOptionsAndFind:
+    """What `ProfileCopier` relies on. The copy itself needs two instances."""
+
+    def test_field_options_returns_a_field_schema(self, client):
+        schema = client.applications.field_options()
+        assert isinstance(schema, dict)
+        assert "first_name" in schema
+        for field in schema.values():
+            assert "type" in field
+            assert "read_only" in field
+        # Server-owned fields are flagged, which is what the copier filters on.
+        assert any(field["read_only"] for field in schema.values())
+
+    def test_field_options_nested_children_carry_read_only(self, client):
+        schema = client.applications.field_options()
+        parent = schema.get("user_parent", {})
+        children = parent.get("children")
+        if not children:
+            pytest.skip("This instance does not expose user_parent children")
+        assert children["id"]["read_only"] is True
+
+    def test_find_round_trips_a_real_student(self, client):
+        page = client.applications.list_page(page_size=1)
+        if not page:
+            pytest.skip("No applications in this instance")
+        app = page[0]
+        found = client.applications.find(
+            app["first_name"], app["last_name"], app["dob"]
+        )
+        assert found is not None
+        assert found["dob"] == app["dob"]
+
+    def test_find_returns_none_for_unknown_student(self, client):
+        assert client.applications.find("Zzzz", "Qqqq", "1900-01-01") is None
+
+    def test_school_scoped_lookups(self, client):
+        for rows, key in (
+            (client.reference_data.interview_categories(), "name"),
+            (client.reference_data.sibling_statuses(), "label"),
+        ):
+            assert isinstance(rows, list)
+            for row in rows:
+                assert "id" in row
+                assert key in row
+
+
 # ── Leads ───────────────────────────────────────────────────
 
 class TestApplicationNestedData:

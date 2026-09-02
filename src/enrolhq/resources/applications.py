@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, List, Optional, Union
 
+from ..constants import ApplicationStatus
 from ..pagination import PaginatedIterator, PaginatedResponse
 from .base import BaseResource
 
@@ -38,6 +39,49 @@ class ApplicationsResource(BaseResource):
         """Get full detail for a single application."""
         return self._get(f"applications/{application_id}/")
 
+    def find(
+        self,
+        first_name: str,
+        last_name: str,
+        dob: str,
+        *,
+        include_trashed: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Find one application by exact name and date of birth.
+
+        The name filters match loosely server-side, so results are re-checked
+        here for an exact (case-insensitive) match on all three values.
+
+        Trashed profiles are excluded unless *include_trashed* is set — a
+        binned record usually should not count as an existing student.
+
+        Args:
+            first_name: Student's first name.
+            last_name: Student's last name.
+            dob: Date of birth as ``YYYY-MM-DD``.
+            include_trashed: Also consider trashed profiles.
+
+        Returns:
+            The matching application, or None if there is no match.
+        """
+        filters: Dict[str, Any] = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "dob": dob,
+        }
+        if not include_trashed:
+            filters["exclude_application_statuses"] = int(ApplicationStatus.TRASHED)
+
+        for app in self.list_page(page_size=10, **filters):
+            if (
+                app["first_name"].strip().lower() == first_name.strip().lower()
+                and app["last_name"].strip().lower() == last_name.strip().lower()
+                and app["dob"] == dob
+                and (include_trashed or app["application_status"] != ApplicationStatus.TRASHED)
+            ):
+                return app
+        return None
+
     # ── Nested profile data ─────────────────────────────────────
     #
     # These live on the detail serializer only. `list()` returns a summary
@@ -68,6 +112,22 @@ class ApplicationsResource(BaseResource):
         Not available from :meth:`list` — this fetches the detail record.
         """
         return self.get(application_id).get("guardians", [])
+
+    # ── Field schema ────────────────────────────────────────────
+
+    def field_options(self, verb: str = "POST") -> Dict[str, Any]:
+        """Ask the instance which application fields it accepts on *verb*.
+
+        Returns the field schema keyed by field name. Each entry has ``type``,
+        ``required``, ``read_only`` and ``label``; ``choice`` fields also carry
+        ``choices``, and nested objects carry ``children`` (recursively, with
+        their own ``read_only`` flags).
+
+        Useful when writing to an instance whose configuration you don't know
+        ahead of time — no two schools enable the same set of fields, so
+        filtering a payload through this is safer than hardcoding field names.
+        """
+        return self._options("applications/")["actions"][verb]
 
     # ── Create / Update ─────────────────────────────────────────
 

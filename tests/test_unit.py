@@ -1,5 +1,7 @@
 """Unit tests for offline logic (no API calls)."""
 
+import copy
+
 import pytest
 
 from enrolhq import (
@@ -304,6 +306,11 @@ class _FakeHttp:
         self.calls = []  # list of (url, params)
         self.posts = []  # list of (url, json)
         self.puts = []  # list of (url, json)
+        self.requests = []  # list of (method, url)
+
+    def request(self, method, url, **kwargs):
+        self.requests.append((method, url))
+        return _FakeResponse(self._payloads.pop(0))
 
     def get(self, url, params=None, **kwargs):
         self.calls.append((url, params))
@@ -858,3 +865,449 @@ def test_submits_passes_filters_through():
     assert params["form"] == "form-a"
     assert params["entry_year"] == 2027
     assert params["is_completed"] is True
+
+
+# ── Application find / field_options ────────────────────────
+
+def _app(first="Ada", last="Lovelace", dob="2012-03-04", status=3, id="app-1"):
+    return {
+        "id": id,
+        "first_name": first,
+        "last_name": last,
+        "dob": dob,
+        "application_status": status,
+    }
+
+
+def test_field_options_uses_options_verb():
+    from enrolhq.resources.applications import ApplicationsResource
+    schema = {"first_name": {"type": "string", "read_only": False}}
+    http = _FakeHttp({"actions": {"POST": schema, "PUT": {}}})
+    res = ApplicationsResource(http, BASE)
+
+    assert res.field_options() == schema
+    assert http.requests == [("OPTIONS", BASE + "applications/")]
+
+
+def test_field_options_verb_selects_the_action():
+    from enrolhq.resources.applications import ApplicationsResource
+    http = _FakeHttp({"actions": {"POST": {}, "PUT": {"dob": {}}}})
+    res = ApplicationsResource(http, BASE)
+    assert res.field_options("PUT") == {"dob": {}}
+
+
+def test_find_returns_exact_match():
+    from enrolhq.resources.applications import ApplicationsResource
+    http = _FakeHttp({"results": [_app()], "next": None})
+    res = ApplicationsResource(http, BASE)
+
+    found = res.find("ada", "LOVELACE", "2012-03-04")
+    assert found["id"] == "app-1"
+
+    url, params = http.calls[0]
+    assert url == BASE + "applications-list/"
+    assert params["first_name"] == "ada"
+    # Trashed profiles are excluded by default.
+    assert params["exclude_application_statuses"] == int(ApplicationStatus.TRASHED)
+
+
+def test_find_rejects_loose_server_side_matches():
+    from enrolhq.resources.applications import ApplicationsResource
+    # The server's name filters match loosely; only an exact match counts.
+    http = _FakeHttp({"results": [_app(first="Adam"), _app(dob="2013-03-04")],
+                      "next": None})
+    res = ApplicationsResource(http, BASE)
+    assert res.find("Ada", "Lovelace", "2012-03-04") is None
+
+
+def test_find_include_trashed_drops_the_exclusion():
+    from enrolhq.resources.applications import ApplicationsResource
+    trashed = _app(status=int(ApplicationStatus.TRASHED))
+    http = _FakeHttp({"results": [trashed], "next": None})
+    res = ApplicationsResource(http, BASE)
+
+    assert res.find("Ada", "Lovelace", "2012-03-04", include_trashed=True) == trashed
+    assert "exclude_application_statuses" not in http.calls[0][1]
+
+
+def test_find_ignores_a_trashed_profile_that_slips_through():
+    from enrolhq.resources.applications import ApplicationsResource
+    http = _FakeHttp(
+        {"results": [_app(status=int(ApplicationStatus.TRASHED))], "next": None}
+    )
+    res = ApplicationsResource(http, BASE)
+    assert res.find("Ada", "Lovelace", "2012-03-04") is None
+
+
+# ── ProfileCopier ───────────────────────────────────────────
+
+#: A target field schema shaped like the API's OPTIONS metadata.
+TARGET_SCHEMA = {
+    "first_name": {"type": "string", "read_only": False},
+    "last_name": {"type": "string", "read_only": False},
+    "dob": {"type": "date", "read_only": False},
+    "updated_at": {"type": "datetime", "read_only": False},
+    "sid": {"type": "string", "read_only": True},
+    "campus": {"type": "field", "read_only": False},
+    "user_parent": {
+        "type": "nested object",
+        "read_only": False,
+        "children": {
+            "id": {"type": "string", "read_only": True},
+            "first_name": {"type": "string", "read_only": False},
+            "email": {"type": "email", "read_only": False},
+        },
+    },
+    "siblings": {
+        "type": "list",
+        "read_only": False,
+        "child": {
+            "type": "nested object",
+            "children": {
+                "id": {"type": "string", "read_only": True},
+                "status": {"type": "field", "read_only": False},
+            },
+        },
+    },
+    "alternative_entry_details": {
+        "type": "field",
+        "read_only": False,
+        "child": {
+            "type": "nested object",
+            "children": {
+                "entry_year": {"type": "integer", "read_only": False},
+                "campus": {"type": "field", "read_only": False},
+                "attendance_type": {"type": "field", "read_only": False},
+                "primary_for": {"type": "choice", "read_only": True},
+            },
+        },
+    },
+}
+
+
+class _FakeReferenceData:
+    """Serves lookup tables by their ReferenceDataResource method name."""
+
+    def __init__(self, tables):
+        self._tables = tables
+
+    def __getattr__(self, name):
+        try:
+            rows = self._tables[name]
+        except KeyError:
+            raise AttributeError(name)
+        return lambda: rows
+
+
+class _FakeApplications:
+    def __init__(self, schema=None, records=None, found=None):
+        self._schema = schema or {}
+        self.records = records or {}
+        self.found = found
+        self.created = []
+        self.updated = []
+
+    def field_options(self, verb="POST"):
+        return self._schema
+
+    def get(self, application_id):
+        return copy.deepcopy(self.records[application_id])
+
+    def find(self, first_name, last_name, dob, **kwargs):
+        return self.found
+
+    def create(self, data):
+        """Return the new id only — `records` is what a later get() sees."""
+        self.created.append(data)
+        return {"id": "target-1"}
+
+    def update(self, application_id, data):
+        self.updated.append((application_id, data))
+        self.records[application_id] = data
+        return data
+
+
+class _FakeClient:
+    def __init__(self, applications=None, tables=None):
+        self.applications = applications or _FakeApplications()
+        self.reference_data = _FakeReferenceData(tables or {})
+
+
+def _copier(source_tables=None, target_tables=None, schema=TARGET_SCHEMA, **target):
+    from enrolhq import ProfileCopier
+    return ProfileCopier(
+        _FakeClient(tables=source_tables),
+        _FakeClient(_FakeApplications(schema=schema, **target), target_tables),
+    )
+
+
+def test_build_payload_drops_unknown_read_only_and_skipped_fields():
+    from enrolhq.sync import CopyResult
+    student = {
+        "first_name": "Ada",
+        "sid": "S-1",                      # read-only on the target
+        "house_colour": "Blue",            # target does not have this field
+        "updated_at": "2026-01-01",        # never copied
+        "avatar": "https://x/a.png",       # never copied
+    }
+    result = CopyResult(application_id="", created=False)
+    payload = _copier().build_payload(student, result)
+
+    assert payload == {"first_name": "Ada"}
+    assert result.copied == ["first_name"]
+    # SKIP_FIELDS are not reported as rejected by the target.
+    assert result.dropped == ["house_colour", "sid"]
+
+
+def test_build_payload_strips_read_only_children_recursively():
+    student = {
+        "user_parent": {
+            "id": "parent-on-source",      # server-owned, read-only
+            "first_name": "Byron",
+            "nickname": "By",              # not in the target's schema
+            "email": "byron@example.com",
+        },
+        "siblings": [{"id": "sib-on-source", "status": None}],
+    }
+    payload = _copier().build_payload(student)
+
+    assert payload["user_parent"] == {
+        "first_name": "Byron", "email": "byron@example.com"
+    }
+    assert payload["siblings"] == [{"status": None}]
+
+
+def test_build_payload_remaps_lookups_by_name():
+    student = {
+        "campus": "source-junior",
+        "siblings": [{"id": "s1", "status": "source-current"}],
+    }
+    copier = _copier(
+        source_tables={
+            "campuses": [{"id": "source-junior", "name": "Junior Campus"}],
+            "sibling_statuses": [{"id": "source-current", "label": "Current"}],
+        },
+        target_tables={
+            "campuses": [{"id": "target-junior", "name": "junior campus"}],
+            "sibling_statuses": [{"id": "target-current", "label": " Current "}],
+        },
+    )
+    payload = copier.build_payload(student)
+
+    # Matched by name, case- and whitespace-insensitively.
+    assert payload["campus"] == "target-junior"
+    assert payload["siblings"][0]["status"] == "target-current"
+
+
+def test_alternative_entry_details_lookups_are_remapped():
+    # An alternative entry carries its own copy of these school-scoped
+    # lookups; they are per-instance for the same reason the top-level
+    # `campus` and `attendance_type` are.
+    student = {
+        "campus": "source-junior",
+        "alternative_entry_details": [{
+            "entry_year": 2032,
+            "campus": "source-senior",
+            "attendance_type": "source-full",
+            "primary_for": "",           # read-only on the target
+        }],
+    }
+    copier = _copier(
+        source_tables={
+            "campuses": [{"id": "source-junior", "name": "Junior"},
+                         {"id": "source-senior", "name": "Senior"}],
+            "attendance_types": [{"id": "source-full", "name": "Full Time"}],
+        },
+        target_tables={
+            "campuses": [{"id": "target-junior", "name": "Junior"},
+                         {"id": "target-senior", "name": "Senior"}],
+            "attendance_types": [{"id": "target-full", "name": "Full Time"}],
+        },
+    )
+    entry = copier.build_payload(student)["alternative_entry_details"][0]
+
+    assert entry["campus"] == "target-senior"
+    assert entry["attendance_type"] == "target-full"
+    assert entry["entry_year"] == 2032
+    assert "primary_for" not in entry
+
+
+def test_alternative_entry_child_fields_follow_the_targets_nested_schema():
+    # Instances differ inside the nested object too: `entry_term` and
+    # `graduation_certificate_type` exist on some schools and not others.
+    # They are plain choices (ints/strings), so they need no remapping —
+    # they just have to survive or be dropped per the target's schema.
+    student = {
+        "alternative_entry_details": [{
+            "entry_year": 2029,
+            "entry_term": 1,                    # not in TARGET_SCHEMA
+            "graduation_certificate_type": "",  # not in TARGET_SCHEMA
+        }],
+    }
+    entry = _copier().build_payload(student)["alternative_entry_details"][0]
+    assert entry == {"entry_year": 2029}
+
+    # ...and are kept when the target does have them.
+    schema = copy.deepcopy(TARGET_SCHEMA)
+    schema["alternative_entry_details"]["child"]["children"].update({
+        "entry_term": {"type": "choice", "read_only": False},
+        "graduation_certificate_type": {"type": "choice", "read_only": False},
+    })
+    entry = _copier(schema=schema).build_payload(student)["alternative_entry_details"][0]
+    assert entry == {
+        "entry_year": 2029, "entry_term": 1, "graduation_certificate_type": "",
+    }
+
+
+def test_unmatched_alternative_entry_campus_is_dropped_not_defaulted():
+    from enrolhq.sync import CopyResult
+    # Unlike the top-level campus, this one is optional on the target, so
+    # there is no default to fall back to.
+    copier = _copier(
+        source_tables={"campuses": [{"id": "source-city", "name": "City"}]},
+        target_tables={"campuses": [{"id": "target-a", "name": "Alpha",
+                                     "is_default": True}]},
+    )
+    result = CopyResult(application_id="", created=False)
+    payload = copier.build_payload(
+        {"alternative_entry_details": [{"campus": "source-city"}]}, result
+    )
+
+    assert payload["alternative_entry_details"][0]["campus"] is None
+    assert result.skipped_lookups == ["alternative_entry_details[].campus=City"]
+
+
+def test_build_payload_records_lookups_with_no_target_equivalent():
+    from enrolhq.sync import CopyResult
+    student = {"siblings": [{"status": "source-alumni"}]}
+    copier = _copier(
+        source_tables={"sibling_statuses": [{"id": "source-alumni",
+                                             "label": "Alumni"}]},
+        target_tables={"sibling_statuses": [{"id": "target-current",
+                                             "label": "Current"}]},
+    )
+    result = CopyResult(application_id="", created=False)
+    payload = copier.build_payload(student, result)
+
+    assert payload["siblings"][0]["status"] is None
+    assert result.skipped_lookups == ["siblings[].status=Alumni"]
+
+
+def test_campus_falls_back_to_the_targets_default():
+    # A campus is required, so an unmatched one falls back rather than
+    # failing the copy — but it is still reported.
+    from enrolhq.sync import CopyResult
+    copier = _copier(
+        source_tables={"campuses": [{"id": "source-city", "name": "City"}]},
+        target_tables={
+            "campuses": [
+                {"id": "target-a", "name": "Alpha", "is_default": False},
+                {"id": "target-b", "name": "Beta", "is_default": True},
+            ]
+        },
+    )
+    result = CopyResult(application_id="", created=False)
+    payload = copier.build_payload({"campus": "source-city"}, result)
+
+    assert payload["campus"] == "target-b"
+    assert result.skipped_lookups == ["campus=City"]
+
+
+def test_lookup_tables_are_fetched_once_per_instance():
+    tables_calls = []
+
+    class _CountingReferenceData(_FakeReferenceData):
+        def __getattr__(self, name):
+            tables_calls.append(name)
+            return super().__getattr__(name)
+
+    copier = _copier(
+        source_tables={"campuses": [{"id": "s", "name": "X"}]},
+        target_tables={"campuses": [{"id": "t", "name": "X"}]},
+    )
+    copier.source.reference_data = _CountingReferenceData(
+        {"campuses": [{"id": "s", "name": "X"}]}
+    )
+    copier.build_payload({"campus": "s"})
+    copier.build_payload({"campus": "s"})
+    assert tables_calls == ["campuses"]
+
+
+def test_copy_creates_then_merges_onto_the_targets_record():
+    from enrolhq import ProfileCopier
+    student = {
+        "id": "source-1",
+        "application_status": 3,
+        "first_name": "Ada",
+        "last_name": "Lovelace",
+        "dob": "2012-03-04",
+        "gender": 2,
+        "entry_grade": 7,
+        "entry_year": 2027,
+        "user_parent": {"id": "p-source", "first_name": "Byron",
+                        "email": "byron@example.com"},
+    }
+    source = _FakeClient(_FakeApplications(records={"source-1": student}))
+    target_apps = _FakeApplications(
+        schema=TARGET_SCHEMA,
+        records={"target-1": {"id": "target-1", "sid": "TARGET-SID",
+                              "first_name": "Ada",
+                              "user_parent": {"id": "p-target"}}},
+        found=None,
+    )
+    result = ProfileCopier(source, _FakeClient(target_apps)).copy("source-1")
+
+    assert result.created is True
+    assert result.application_id == "target-1"
+    assert target_apps.created[0]["first_name"] == "Ada"
+    assert target_apps.created[0]["user_parent"]["email"] == "byron@example.com"
+
+    application_id, sent = target_apps.updated[0]
+    assert application_id == "target-1"
+    # The target's own values survive the merge...
+    assert sent["sid"] == "TARGET-SID"
+    assert sent["user_parent"]["id"] == "p-target"
+    # ...and the source's are overlaid onto them.
+    assert sent["user_parent"]["email"] == "byron@example.com"
+    # The source's own id is never copied across.
+    assert sent["id"] == "target-1"
+
+
+def test_copy_updates_an_existing_profile_without_creating():
+    from enrolhq import ProfileCopier
+    student = {"id": "source-1", "first_name": "Ada", "last_name": "Lovelace",
+               "dob": "2012-03-04"}
+    existing = {"id": "target-9", "first_name": "Ada"}
+    source = _FakeClient(_FakeApplications(records={"source-1": student}))
+    target_apps = _FakeApplications(
+        schema=TARGET_SCHEMA, records={"target-9": existing}, found=existing
+    )
+    result = ProfileCopier(source, _FakeClient(target_apps)).copy("source-1")
+
+    assert result.created is False
+    assert result.application_id == "target-9"
+    assert target_apps.created == []
+    assert target_apps.updated[0][0] == "target-9"
+
+
+def test_merge_overlays_nested_objects_rather_than_replacing_them():
+    from enrolhq.sync import _merge
+    target = {"a": 1, "nested": {"keep": "target", "shared": "target"}}
+    source = {"nested": {"shared": "source", "added": "source"}}
+    assert _merge(target, source) == {
+        "a": 1,
+        "nested": {"keep": "target", "shared": "source", "added": "source"},
+    }
+
+
+def test_lists_are_replaced_not_merged():
+    from enrolhq.sync import _merge
+    assert _merge({"x": [1, 2, 3]}, {"x": [9]}) == {"x": [9]}
+
+
+def test_package_exports_the_copier():
+    from enrolhq import CopyResult, ProfileCopier
+    result = CopyResult(application_id="a", created=True)
+    assert result.copied == [] and result.dropped == []
+    assert result.skipped_lookups == []
+    assert ProfileCopier(None, None).source is None

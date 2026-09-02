@@ -161,6 +161,36 @@ for record in client.forms.iter_answers(form=form["id"], is_completed=True):
 
 See [`examples/16_emergency_contacts_and_consents.py`](examples/16_emergency_contacts_and_consents.py).
 
+## Copying between instances
+
+`ProfileCopier` copies a student profile from one instance to another — from
+production to a staging site, say. Two instances are rarely configured alike,
+so it does not simply PUT the source record: it filters the payload through the
+target's own field schema (`applications.field_options()`, backed by the API's
+`OPTIONS` metadata) and translates school-scoped lookup values (campus,
+attendance type, sibling status, ...) by name, because their IDs differ per
+instance.
+
+```python
+from enrolhq import EnrolHQClient, ProfileCopier
+
+source = EnrolHQClient(base_url=..., api_token=...)
+target = EnrolHQClient(base_url=..., api_token=...)
+
+result = ProfileCopier(source, target).copy(application_id)
+result.application_id     # the student's id on the target
+result.created            # False if an existing profile was updated
+result.dropped            # fields the target does not accept
+result.skipped_lookups    # lookup values with no target equivalent
+```
+
+The student is found on the target by name and date of birth
+(`applications.find()`), so re-running updates that profile rather than
+creating a duplicate. Trashed profiles are ignored, and documents are not
+copied — use `client.documents` for those.
+
+See [`examples/18_copy_application_between_instances.py`](examples/18_copy_application_between_instances.py).
+
 ## Error handling
 
 ```python

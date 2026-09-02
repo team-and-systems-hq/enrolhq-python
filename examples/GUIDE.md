@@ -555,6 +555,75 @@ structured data: `EMERGENCY_CONTACTS` is a list, `MEDICAL_DATA` a dict, and a
 `documents` key — `len()` on the group itself counts its fields, not its
 files.
 
+---
+
+## 18 - Copy Application Between Instances
+
+**File:** [`18_copy_application_between_instances.py`](18_copy_application_between_instances.py)
+
+Copy a student from one EnrolHQ instance to another — moving a record from
+production to a staging site, for example. `ProfileCopier` combines the earlier
+examples: it searches the target (02), creates the student if they are not there
+(03), then copies the values across with a get -> modify -> PUT (04).
+
+Two instances are rarely configured alike, so the copier does not simply PUT the
+source record. It asks the target which fields it accepts and translates lookup
+values by name.
+
+```python
+import os
+
+from enrolhq import EnrolHQClient, ProfileCopier
+
+source = EnrolHQClient(
+    base_url=os.environ["ENROLHQ_SOURCE_BASE_URL"],
+    api_token=os.environ["ENROLHQ_SOURCE_API_TOKEN"],
+)
+target = EnrolHQClient(
+    base_url=os.environ["ENROLHQ_TARGET_BASE_URL"],
+    api_token=os.environ["ENROLHQ_TARGET_API_TOKEN"],
+)
+
+result = ProfileCopier(source, target).copy("application-uuid")
+
+print(f"{'Created' if result.created else 'Updated'} {result.application_id}")
+print(f"  {len(result.copied)} fields copied")
+print(f"  {len(result.dropped)} not accepted by target")
+for skipped in result.skipped_lookups:
+    print(f"  no match on target: {skipped}")
+```
+
+Key concepts:
+
+- **Two clients, one process.** Each `EnrolHQClient` holds its own token and
+  session, so a source and a target can be used side by side. Pass `base_url` and
+  `api_token` explicitly — an explicit `base_url` suppresses the `.env` fallback,
+  so the two never get crossed. This is the one example that does not read from
+  `.env`, because those keys describe a single instance.
+- **The instance decides which fields it accepts.**
+  `client.applications.field_options()` returns the field schema from the API's
+  `OPTIONS` metadata — `type`, `required`, `read_only`, `choices`, and `children`
+  for nested objects. The copier filters the payload through it recursively, so
+  fields the target does not have and server-owned keys like `user_parent.id`
+  never get sent. Those show up in `result.dropped`.
+- **Lookup IDs are per-instance.** Campuses, attendance types, parent
+  relationships, profile category options, interview categories and sibling
+  statuses all have different UUIDs on every instance, so they are matched by
+  name instead. A value with no equivalent on the target is skipped and listed in
+  `result.skipped_lookups` rather than failing the copy. Global dictionaries
+  (countries, languages, schools) share IDs and pass through untouched.
+- **Find or create.** The student is looked up on the target by first name, last
+  name and date of birth via `applications.find()`, which re-checks the loose
+  server-side name filters for an exact match. Trashed profiles are ignored, so a
+  record staff deleted is never revived — a new one is created instead.
+- **Re-running is safe.** The second run finds the profile it created and updates
+  it in place rather than making a duplicate.
+- **Documents are not copied.** Use `client.documents` (examples 05 and 06) if
+  you need them.
+
+> **Warning:** This writes real data to the target instance. The source is only
+> ever read from.
+
 ## Error Handling
 
 All examples will raise clear exceptions on failure:

@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`ProfileCopier`** — copy a student profile between two EnrolHQ instances.
+  `ProfileCopier(source, target).copy(application_id)` looks the student up on
+  the target by name and date of birth, creates them if they are not there,
+  then copies the values across. Trashed profiles are ignored during the
+  lookup, so a record staff deleted is never revived. Returns a `CopyResult`
+  listing what was copied, what the target would not accept, and which lookup
+  values had no equivalent. Documents are not copied.
+- **`client.applications.field_options(verb="POST")`** — the field schema the
+  instance accepts, from the API's `OPTIONS` metadata: `type`, `required`,
+  `read_only`, `choices`, and `children` for nested objects. No two schools
+  enable the same fields, so this allows building a payload for an instance
+  whose configuration is not known ahead of time. `ProfileCopier` filters
+  through it recursively rather than hardcoding a field list.
+- **`client.applications.find(first_name, last_name, dob)`** — find a single
+  application by exact name and date of birth. The server-side name filters
+  match loosely, so results are re-checked for an exact match. Excludes
+  trashed profiles unless `include_trashed=True`.
+- `client.reference_data.interview_categories()` and
+  `client.reference_data.sibling_statuses()` — lookup lists that live on the
+  `school/` settings object (as `profile_priorities` and `siblings_statuses`)
+  rather than behind their own endpoints. Sibling statuses are named by
+  `label`, not `name`.
+- `BaseResource._options()` — shared `OPTIONS` helper alongside the existing
+  `_get` / `_post` / `_put` / `_delete`.
+- Example `18_copy_application_between_instances.py` with a matching Examples
+  Guide section.
 - **`client.forms`** — custom forms and parent submissions, the home of
   photo/video permission and consent answers. Form definitions via `list()` /
   `list_page()` (`GET forms/staff/`), `published()` (`GET forms/`, includes
@@ -66,6 +92,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Document that the integration test suite makes real API calls and only runs
   with a valid `.env` (`ENROLHQ_BASE_URL` + `ENROLHQ_API_TOKEN`); unit tests run
   offline with no credentials. Added a "Testing" section to the README.
+
+### Notes
+
+- Lookup tables are school-scoped: campuses, attendance types, parent
+  relationships, profile category options, interview categories and sibling
+  statuses all use different UUIDs on every instance, so `ProfileCopier`
+  matches them by name. This includes the campus and attendance type nested
+  inside `alternative_entry_details`, which are separate values from the
+  top-level ones. Global dictionaries (countries, languages, schools) share
+  IDs across instances and are copied as-is.
+- Known gap: `medical_data.medical_conditions_v2[].option` is also
+  school-scoped but is not remapped — `LOOKUP_FIELDS` paths address a field
+  either at the top level or one list deep, and this one sits behind both a
+  nested object and a list.
+- Example 18 is the only example that does not read from `.env`, since those
+  keys describe a single instance. It uses `ENROLHQ_SOURCE_*` /
+  `ENROLHQ_TARGET_*` environment variables instead.
 
 ## [0.2.0] - 2026-06-26
 

@@ -17,6 +17,7 @@ from .pagination import (
     PaginatedIterator,
     PaginatedResponse,
 )
+from .sync import CopyResult, ProfileCopier
 
 __all__ = [
     "__version__",
@@ -34,4 +35,6 @@ __all__ = [
     "PaginatedIterator",
     "PaginatedResponse",
     "CursorPaginatedIterator",
+    "ProfileCopier",
+    "CopyResult",
 ]
