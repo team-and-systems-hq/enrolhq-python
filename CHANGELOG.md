@@ -14,8 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *Settings > Integrations*). Covers both protocols (legacy synchronous and the
   async `sync_request` callback to `integrations/sync/finished/`), the inbound
   payload shapes, the response schemas and their validation rules, what the
-  Integration Service Token and Timeout actually control, the scheduled-sync
-  poll endpoints, and a minimal Flask receiver.
+  Integration Service Token and Timeout actually control, and a minimal Flask
+  receiver.
 - **`client.forms`** — custom forms and parent submissions, the home of
   photo/video permission and consent answers. Form definitions via `list()` /
   `list_page()` (`GET forms/staff/`), `published()` (`GET forms/`, includes

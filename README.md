@@ -176,8 +176,8 @@ that hands you a `sync_request` id to acknowledge immediately and answer later
 via `POST {school_domain}/api/v2/integrations/sync/finished/`.
 
 See [docs/integration-service.md](docs/integration-service.md) for the payload
-shapes, response schemas, what the token and timeout actually control, the
-scheduled-sync poll endpoints, and a working receiver.
+shapes, response schemas, what the token and timeout actually control, and a
+working receiver.
 
 ## Error handling
 
