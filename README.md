@@ -161,6 +161,24 @@ for record in client.forms.iter_answers(form=form["id"], is_completed=True):
 
 See [`examples/16_emergency_contacts_and_consents.py`](examples/16_emergency_contacts_and_consents.py).
 
+## Receiving sync signals (integration service)
+
+EnrolHQ can push sync signals *out* to a service you host — the URL configured
+under **Settings > Integrations > Integration Service Edit**. It `POST`s JSON
+carrying student profile ids, authenticated with the shared bearer token from
+that screen; you read the profiles with this SDK, write them into the school's
+SIS, and report the outcome back.
+
+There are two protocols (which one fires depends on the school's `NEW_SYNC`
+feature flag, so handle both): a legacy synchronous one where you return the
+result in the HTTP response body within the configured timeout, and an async one
+that hands you a `sync_request` id to acknowledge immediately and answer later
+via `POST {school_domain}/api/v2/integrations/sync/finished/`.
+
+See [docs/integration-service.md](docs/integration-service.md) for the payload
+shapes, response schemas, what the token and timeout actually control, the
+scheduled-sync poll endpoints, and a working receiver.
+
 ## Error handling
 
 ```python
