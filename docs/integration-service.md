@@ -26,7 +26,7 @@ the SIS, and report the outcome back.
 | **Integration Service URL** | `url` | Your HTTPS endpoint. EnrolHQ `POST`s JSON here. This is the *only* outbound destination — there are no other webhooks. |
 | **Integration Service Token** | `token` | A shared secret **you** choose and paste in. EnrolHQ sends it as `Authorization: Bearer <token>`. Write-only in the API (`SecretKeyField`), so it is masked after saving — record it somewhere when you set it. Max 255 chars. |
 | **Integration Service Timeout** | `timeout` | Seconds EnrolHQ waits for your HTTP response. Default `10`. Passed straight to `requests.post(..., timeout=...)`. |
-| **Scheduled Sync Features** | `scheduled_sync_features` | Which sync actions staff can trigger. See [§6](#6-scheduled-sync-a-pull-not-a-push). An empty list hides the sync dropdown entirely. |
+| **Scheduled Sync Features** | `scheduled_sync_features` | Gates which sync actions staff see. **"Synchronous sync (default)" must be ticked** — that is the toggle for the sync that calls your URL. With nothing ticked, the sync menu does not render at all and your service is never called. |
 | **Additional Sync Instruction** | `sync_instruction` | A private document staff can download from the app. Not sent to you. |
 
 ### What the token and timeout actually do
@@ -332,65 +332,11 @@ that school — unknown ids are a validation error.
 
 ---
 
-## 6. Scheduled sync: a pull, not a push
-
-The **Scheduled Sync Features** toggles do *not* create extra outbound calls.
-They control which actions staff see:
-
-| Toggle | Value | Effect |
-|--------|-------|--------|
-| Synchronous sync (default) | `DEFAULT_SYNC` | The immediate sync — this is the one that hits your URL (§3–§5). |
-| Push All | `PUSH_ALL` | Queues a `ScheduledSync` row, direction `PUSH_ALL`. |
-| Push Documents | `PUSH_DOCS` | Queues a row, direction `PUSH_DOCS`. |
-| Pull All | `PULL_ALL` | Queues a row, direction `PULL_ALL`. |
-| Cancel | `CANCEL` | Lets staff cancel queued, unprocessed rows. |
-
-With all toggles off the sync dropdown does not appear at all, so at minimum
-enable `DEFAULT_SYNC` if you want the webhook to fire.
-
-The three directional features only write a queue row. **Nothing is sent to
-your URL** — your service polls for work and reports back:
-
-```python
-# 1. Poll for queued work
-resp = client._http.get(
-    client.base_url + "integrations/scheduled_sync/",
-    params={
-        "is_processed": False,
-        "is_cancelled": False,
-        "system_name": "SYNERGETIC",
-        "direction": "PUSH_ALL",
-    },
-)
-
-# 2. Do the SIS work, then mark each one done
-client._http.post(
-    client.base_url + "integrations/scheduled_sync/mark_processed/",
-    json={
-        "system_name": "SYNERGETIC",          # integration name
-        "student_profile": "<student uuid>",
-        "direction": "PUSH_ALL",
-        "error": "",                           # non-empty marks it failed
-    },
-)
-```
-
-Each queued row exposes `system_name`, `student_profile`, `direction`,
-`created_at`, `processed_at`, `cancelled_at` and `error`. Only one unprocessed,
-uncancelled row can exist per (integration, student) pair — re-queueing while
-one is pending is a no-op. `mark_processed/` marks the *latest* row for that
-triple as processed, and deliberately also settles a row staff cancelled while
-you were mid-flight.
-
----
-
-## 7. Logs
+## 6. Logs
 
 - **Call Log** — the legacy per-profile responses
   (`GET integrations/services/responses/?integration_service=<uuid>`): timestamp,
   student, raw response, message, success flag.
-- **Scheduled Sync Log** — the queue
-  (`GET integrations/scheduled_sync/`).
 - **Sync request log** (async protocol) —
   `GET integrations/sync/` and `GET integrations/sync/for-profile/<uuid>/`,
   showing each request, its profiles, per-profile errors/warnings and the
@@ -402,7 +348,7 @@ which is what to ask EnrolHQ support for when a callback is being rejected.
 
 ---
 
-## 8. A minimal receiver
+## 7. A minimal receiver
 
 Handles both protocols, acknowledges first, works on a background thread.
 
@@ -532,7 +478,7 @@ Things this gets right, and that are easy to get wrong:
 
 ---
 
-## 9. Local testing
+## 8. Local testing
 
 EnrolHQ ships a built-in simulator on non-production builds. Point **Integration
 Service URL** at the school's own instance:
