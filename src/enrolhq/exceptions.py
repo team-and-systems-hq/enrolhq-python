@@ -26,14 +26,15 @@ class APIError(EnrolHQError):
 
 
 class AuthenticationError(APIError):
-    """Raised when authentication fails (401)."""
+    """Raised when authentication fails (401, unless *status_code* says otherwise)."""
 
     def __init__(
         self,
         detail: Any = None,
         response: Optional[object] = None,
+        status_code: int = 401,
     ) -> None:
-        super().__init__(401, detail=detail, response=response)
+        super().__init__(status_code, detail=detail, response=response)
 
 
 class NotFoundError(APIError):

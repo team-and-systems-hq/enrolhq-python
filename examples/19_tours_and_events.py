@@ -9,7 +9,8 @@ Gotchas this example handles:
   - ``kind`` is an event kind id from event settings, not an enum.
   - Session times are ``{"HH": "09", "mm": "30"}`` objects; ``session()``
     builds them from "09:30" strings. Times are in the school's timezone.
-  - Sessions are replaced wholesale on update: keep existing ones by id.
+  - Sessions are replaced wholesale on update: keep existing ones by id,
+    including ones outside the window this run generates.
 """
 
 import datetime as dt
@@ -35,13 +36,14 @@ if not apply:
 
 # Add the kind if it is missing (existing kinds are kept).
 kinds = client.event_settings.ensure_kinds([KIND])
-kind_id = next(k["id"] for k in kinds if k["label"] == KIND)
+kind_id = next(k["id"] for k in kinds if k["label"].lower() == KIND.lower())
 
 # Two tours a week for the next four weeks.
 today = dt.date.today()
 dates = [today + dt.timedelta(days=d) for d in range(1, 29)]
 sessions = [
-    session(f"{day:%A %-d %B}", day, "09:30", "10:30", capacity=20, registrations_limit=6)
+    session(f"{day:%A} {day.day} {day:%B}", day, "09:30", "10:30",
+            capacity=20, registrations_limit=6)
     for day in dates
     if day.weekday() in (1, 3)  # Tuesday, Thursday
 ]
@@ -62,13 +64,19 @@ if existing is None:
     created = client.events.create({**event, "sessions": sessions})  # slug is generated
     print(f"Created {created['name']} ({created['slug']})")
 else:
+    # Start from the current event so fields this script doesn't set (e.g. a
+    # custom after-submit action) are kept.
     current = client.events.get(existing["id"])
-    # Keep the ids of sessions that already exist so their bookings survive.
+    # Reuse the ids of sessions that already exist so their bookings survive.
     by_date = {(s["date"], s["start_time"]["HH"], s["start_time"]["mm"]): s["id"]
                for s in current["sessions"]}
     for s in sessions:
         key = (s["date"], s["start_time"]["HH"], s["start_time"]["mm"])
         if key in by_date:
             s["id"] = by_date[key]
-    client.events.update(current["id"], {**event, "slug": current["slug"], "sessions": sessions})
+    # Sessions left out of the PUT are deleted, so carry over the ones outside
+    # this run's four-week window (past sessions and earlier runs' extras).
+    reused = {s["id"] for s in sessions if "id" in s}
+    sessions += [s for s in current["sessions"] if s["id"] not in reused]
+    client.events.update(current["id"], {**current, **event, "sessions": sessions})
     print(f"Updated {current['name']}")

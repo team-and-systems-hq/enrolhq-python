@@ -74,6 +74,8 @@ class LookAndFeelResource(BaseResource):
             if not _HEX.match(value):
                 raise ValueError(f"{key} must be #RRGGBB, got {value!r}")
             palette[key] = value
+        if not palette:
+            raise ValueError("Pass primary_color and/or secondary_color")
         return self._write(palette=palette)
 
     def set_form_header_themes(self, **themes: str) -> Optional[Dict[str, Any]]:
@@ -81,6 +83,8 @@ class LookAndFeelResource(BaseResource):
 
             client.look_and_feel.set_form_header_themes(enq="dark", eoi="dark")
         """
+        if not themes:
+            raise ValueError(f"Pass a theme for at least one of {FORM_CODES}")
         for code, theme in themes.items():
             if code not in FORM_CODES:
                 raise ValueError(f"Unknown form code {code!r}; expected one of {FORM_CODES}")
@@ -93,6 +97,8 @@ class LookAndFeelResource(BaseResource):
 
             client.look_and_feel.set_fonts(regular=font["id"], brand=brand["id"])
         """
+        if not slots:
+            raise ValueError(f"Pass a font for at least one of {FONT_SLOTS}")
         unknown = set(slots) - set(FONT_SLOTS)
         if unknown:
             raise ValueError(f"Unknown font slot(s): {', '.join(sorted(unknown))}")

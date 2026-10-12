@@ -44,6 +44,7 @@ class TokenAuth:
                         "canonical host in base_url (or pass domain=)."
                     ),
                     response=resp,
+                    status_code=resp.status_code,
                 )
             resp.raise_for_status()
         except requests.RequestException as exc:

@@ -219,6 +219,7 @@ Things the settings endpoints have in common:
   `update_fields()` helpers do GET → deep-merge → PUT, so you only pass what
   changes. Nested dicts merge; wrap a value in `Replace(...)` to replace a dict
   wholesale (e.g. a country, which the server looks up by `id` first).
+  `school.set_region()` and `campuses.update_fields()` do this for `country`.
 - **Nested lists are replaced wholesale.** Rows with a known `id` are updated,
   rows without one are created, and existing rows you leave out are deleted.
   This applies to event sessions, event kinds, attendance types and policy

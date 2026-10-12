@@ -135,6 +135,32 @@ def test_get_still_follows_redirects():
     assert "allow_redirects" not in http.session.kwargs
 
 
+def test_token_refresh_redirect_raises_with_real_status(monkeypatch):
+    from enrolhq import AuthenticationError
+    from enrolhq.auth import TokenAuth
+
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append(kwargs)
+        resp = requests.Response()
+        resp.status_code = 301
+        resp.headers["Location"] = "https://x.enrolhq.net.au/api/v2/accounts/refresh/"
+        return resp
+
+    monkeypatch.setattr("enrolhq.auth.requests.post", fake_post)
+    with pytest.raises(AuthenticationError, match="x.enrolhq.net.au") as exc_info:
+        TokenAuth("https://x.enrolhq.com.au/api/v2/", "t").authenticate()
+    assert exc_info.value.status_code == 301
+    assert str(exc_info.value).startswith("HTTP 301: ")
+    assert calls[0]["allow_redirects"] is False
+
+
+def test_authentication_error_defaults_to_401():
+    from enrolhq import AuthenticationError
+    assert AuthenticationError(detail="nope").status_code == 401
+
+
 # ── Files ───────────────────────────────────────────────────
 
 def test_image_data_uri_sniffs_type(tmp_path):
@@ -266,6 +292,26 @@ def test_campus_set_images_encodes_and_clears(tmp_path):
     assert set(images) == {"favicon", "logo_light"}
 
 
+def test_campus_update_fields_replaces_country():
+    from enrolhq.resources.campuses import CampusesResource
+    http = _Http(_campus(), {})
+    CampusesResource(http, BASE).update_fields(
+        "c1", {"residential_address": {"state": "Canterbury",
+                                       "country": {"alpha_2_code": "NZ"}}}
+    )
+    address = http.writes()[0][2]["residential_address"]
+    assert address == {"street_address": "", "state": "Canterbury",
+                       "country": {"alpha_2_code": "NZ"}}  # no stale id
+
+
+def test_campus_set_images_requires_a_slot():
+    from enrolhq.resources.campuses import CampusesResource
+    http = _Http()
+    with pytest.raises(ValueError):
+        CampusesResource(http, BASE).set_images("c1")
+    assert http.requests == []
+
+
 def test_campus_set_images_rejects_unknown_slot():
     from enrolhq.resources.campuses import CampusesResource
     with pytest.raises(ValueError, match="logo_huge"):
@@ -312,6 +358,31 @@ def test_set_form_header_themes_validates():
         LookAndFeelResource(_Http(), BASE).set_form_header_themes(enq="grey")
     with pytest.raises(ValueError):
         LookAndFeelResource(_Http(), BASE).set_form_header_themes(zzz="dark")
+
+
+def test_set_fonts_keeps_other_slots():
+    from enrolhq.resources.look_and_feel import LookAndFeelResource
+    http = _Http(_laf(), {})
+    LookAndFeelResource(http, BASE).set_fonts(brand="f2")
+    method, url, body = http.writes()[0]
+    assert (method, url) == ("PUT", BASE + "cms-look-and-feel/")
+    assert body["fonts"] == {"regular": "f1", "brand": "f2"}
+    assert body["palette"] == _laf()["palette"]
+
+
+def test_set_fonts_rejects_unknown_slot():
+    from enrolhq.resources.look_and_feel import LookAndFeelResource
+    with pytest.raises(ValueError, match="italic"):
+        LookAndFeelResource(_Http(), BASE).set_fonts(italic="f1")
+
+
+@pytest.mark.parametrize("method", ["set_palette", "set_form_header_themes", "set_fonts"])
+def test_look_and_feel_setters_require_a_change(method):
+    from enrolhq.resources.look_and_feel import LookAndFeelResource
+    http = _Http()
+    with pytest.raises(ValueError):
+        getattr(LookAndFeelResource(http, BASE), method)()
+    assert http.requests == []
 
 
 def test_upload_font_posts_both_files():
@@ -380,6 +451,30 @@ def test_ensure_kinds_remove_others():
     assert [k["label"] for k in sent] == ["Open Day"]
 
 
+@pytest.mark.parametrize("labels,match", [
+    (["Open-Day!"], "open-day"),           # collides with existing "Open Day"
+    (["Campus Tour", "Campus  Tour?"], "campus-tour"),  # collide with each other
+    (["参观"], "slug"),                     # nothing to build a slug from
+])
+def test_ensure_kinds_rejects_bad_slugs(labels, match):
+    from enrolhq.resources.event_settings import EventSettingsResource
+    http = _Http(_event_settings())
+    with pytest.raises(ValueError, match=match):
+        EventSettingsResource(http, BASE).ensure_kinds(labels)
+    assert http.writes() == []
+
+
+def test_ensure_kinds_ignores_existing_duplicate_slugs():
+    from enrolhq.resources.event_settings import EventSettingsResource
+    settings = _event_settings()
+    settings["event_kind_options"].append(
+        {"id": "k3", "label": "Open-Day", "slug": "open-day", "is_enabled": True}
+    )
+    http = _Http(settings, {"event_kind_options": []})
+    EventSettingsResource(http, BASE).ensure_kinds(["School Tour"])
+    assert len(http.writes()) == 1
+
+
 # ── EntryGradeSettingsResource ──────────────────────────────
 
 def test_modify_grades_applies_fn_and_top_level():
@@ -423,15 +518,18 @@ def test_payment_settings_update_fields():
     (dt.time(14, 5), {"HH": "14", "mm": "05"}),
     ({"HH": 9, "mm": 0}, {"HH": "09", "mm": "00"}),
     ({"HH": "10", "mm": "45"}, {"HH": "10", "mm": "45"}),
+    ("09:30:00", {"HH": "09", "mm": "30"}),
+    (str(dt.time(9, 30, 0, 500000)), {"HH": "09", "mm": "30"}),
     (None, None),
 ])
 def test_json_time(value, expected):
     assert json_time(value) == expected
 
 
-def test_json_time_rejects_invalid():
-    with pytest.raises(ValueError):
-        json_time("25:00")
+@pytest.mark.parametrize("value", ["25:00", "09:60", "9:30pm", "nine", "", {"HH": "x", "mm": "0"}, {"HH": 9}])
+def test_json_time_rejects_invalid(value):
+    with pytest.raises(ValueError, match="Invalid time"):
+        json_time(value)
 
 
 def test_session_builder():
@@ -459,6 +557,28 @@ def test_event_create_keeps_explicit_values():
     EventsResource(http, BASE).create({"name": "x", "slug": "x", "after_submit_settings": after})
     body = http.writes()[0][2]
     assert body["slug"] == "x" and body["after_submit_settings"] == after
+
+
+def test_event_update_copies_missing_keys_from_current():
+    from enrolhq.resources.events import EventsResource
+    after = {"action": "REDIRECT_TO_URL", "redirect_url": "https://x"}
+    http = _Http({"id": "e1", "slug": "tour", "after_submit_settings": after}, {})
+    EventsResource(http, BASE).update("e1", {"name": "Tour", "sessions": []})
+    assert http.requests[0][:2] == ("GET", BASE + "staff-events/e1/")
+    method, url, body = http.writes()[0]
+    assert (method, url) == ("PUT", BASE + "staff-events/e1/")
+    assert body["slug"] == "tour" and body["after_submit_settings"] == after
+
+
+def test_event_update_sends_explicit_values_without_get():
+    from enrolhq.resources.events import EventsResource
+    http = _Http({})
+    EventsResource(http, BASE).update(
+        "e1", {"name": "Tour", "slug": "tour", "after_submit_settings": None}
+    )
+    assert [r[0] for r in http.requests] == ["PUT"]
+    body = http.writes()[0][2]
+    assert body["slug"] == "tour" and body["after_submit_settings"] is None
 
 
 def test_event_preview_uses_existing_endpoint():
@@ -513,3 +633,28 @@ def test_metafields_delete_field_uses_query_params():
     MetafieldsResource(http, BASE).delete_field("questionnaire", "q1")
     assert http.writes()[0] == ("DELETE", BASE + "metafields/",
                                 {"block": "questionnaire", "field": "q1"})
+
+
+def test_metafields_create_field_posts_data():
+    from enrolhq.resources.metafields import MetafieldsResource
+    http = _Http({"field": "q1"})
+    data = {"block": "questionnaire", "label": "Dietary needs", "type": "text"}
+    MetafieldsResource(http, BASE).create_field(data)
+    assert http.writes()[0] == ("POST", BASE + "metafields/", data)
+
+
+def test_metafields_toggle_block():
+    from enrolhq.resources.metafields import MetafieldsResource
+    http = _Http(None)
+    MetafieldsResource(http, BASE).toggle_block("medical", "enr", False)
+    assert http.writes()[0] == ("POST", BASE + "metafields/toggle_block/",
+                                {"block_name": "medical", "form_code": "enr",
+                                 "is_enabled": False})
+
+
+def test_metafields_mutate_ordering():
+    from enrolhq.resources.metafields import MetafieldsResource
+    http = _Http(None)
+    MetafieldsResource(http, BASE).mutate_ordering("parent", ["how_hear", "email"])
+    assert http.writes()[0] == ("POST", BASE + "metafields/mutate_ordering/",
+                                {"block_name": "parent", "ordering": ["how_hear", "email"]})

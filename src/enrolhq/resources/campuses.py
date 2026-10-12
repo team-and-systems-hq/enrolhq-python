@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from ..files import Source, image_data_uri
 from ..pagination import PaginatedIterator
-from .base import BaseResource, deep_merge
+from .base import BaseResource, Replace, deep_merge
 
 #: Branding image slots on a campus (``cms_images``), with the size the
 #: EnrolHQ settings screen recommends.
@@ -88,8 +88,24 @@ class CampusesResource(BaseResource):
         ``cms_images`` in the PUT body is reduced to the slots present in
         ``changes["cms_images"]``, because the GET returns image URLs that
         the server rejects on write.
+
+        A ``residential_address.country`` in *changes* replaces the current
+        country rather than merging into it (the server looks a country up by
+        ``id`` first, so a merged ``{"alpha_2_code": "NZ"}`` would keep the
+        old ``id``)::
+
+            client.campuses.update_fields(
+                campus["id"],
+                {"residential_address": {"country": {"alpha_2_code": "NZ"}}},
+            )
         """
         current = self.get(campus_id)
+        address = changes.get("residential_address")
+        if isinstance(address, dict) and isinstance(address.get("country"), dict):
+            changes = {
+                **changes,
+                "residential_address": {**address, "country": Replace(address["country"])},
+            }
         body = deep_merge(current, changes)
         body["cms_images"] = dict(changes.get("cms_images") or {})
         return self.update(campus_id, body)
@@ -109,6 +125,8 @@ class CampusesResource(BaseResource):
                 default_header_image="assets/campus.jpg",
             )
         """
+        if not images:
+            raise ValueError("Pass at least one image slot")
         unknown = set(images) - set(IMAGE_SLOTS)
         if unknown:
             raise ValueError(f"Unknown image slot(s): {', '.join(sorted(unknown))}")

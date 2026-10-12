@@ -16,12 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `client.campuses` (`school-campuses/`): `list`, `get`, `default`, `create`,
     `update`, `update_fields`, and `set_images(campus_id, **slots)` for the 20
     branding image slots (`IMAGE_SLOTS`: logos, favicon, header and background
-    images, email logos).
+    images, email logos). `update_fields` replaces
+    `residential_address.country` rather than merging it.
   - `client.look_and_feel` (`cms-look-and-feel/`, `cms-fonts/`):
     `set_palette`, `set_form_header_themes`, `set_fonts`, `font_library`,
     `upload_font` and `find_or_upload_font`.
   - `client.event_settings` (`event-settings/`): `get`, `update`,
-    `update_fields`, `kind_options` and `ensure_kinds(labels)`.
+    `update_fields`, `kind_options` and `ensure_kinds(labels)`. Before
+    writing, `ensure_kinds` rejects a new label that yields an empty slug or
+    one another kind already uses.
   - `client.entry_grade_settings` (`entry-grade-settings/`): `get`, `update`
     and `modify_grades(fn, **top_level)`. Year 13 is hidden by default.
   - `client.payment_settings` (`payment/settings/`): `get`, `update` and
@@ -39,8 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoints. `Replace` swaps a nested dict wholesale instead of merging it.
 - **`session()` and `json_time()`** build event sessions. Times become the
   server's `{"HH": "09", "mm": "30"}` shape, so a GET → PUT round trip compares
-  equal. `events.create()` now fills in the required `slug` and
-  `after_submit_settings` keys, and `events.find(name)` looks up an event by
+  equal. `json_time()` also accepts `"HH:MM:SS"`, ignoring the seconds.
+  `events.create()` now fills in the required `slug` and
+  `after_submit_settings` keys, `events.update()` copies them from the current
+  event when they are missing, and `events.find(name)` looks up an event by
   name.
 - **`domain=` / `ENROLHQ_DOMAIN`** builds the base URL for schools hosted on
   `enrolhq.net.au` from `instance=`.
@@ -57,7 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.net.au` school) used to follow the server's 301. That dropped the
   `Authorization` header and turned the POST/PUT into a GET. Writes and the
   token refresh no longer follow redirects; they raise an error naming the
-  canonical URL.
+  canonical URL. `AuthenticationError` takes an optional `status_code`, so a
+  redirected token refresh reports the real 3xx status, not 401.
 
 - **`docs/integration-service.md`** — how to build the service that receives
   EnrolHQ's outbound sync signals (the **Integration Service URL** on

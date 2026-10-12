@@ -1,6 +1,7 @@
 """Events resource (staff-side)."""
 
 import datetime as dt
+import re
 from typing import Any, Dict, List, Optional, Union
 
 from ..pagination import PaginatedIterator, PaginatedResponse
@@ -16,6 +17,11 @@ AFTER_SUBMIT_ACTIONS = (
     "REDIRECT_TO_URL",
 )
 
+#: Keys a staff event PUT must always include.
+_REQUIRED_KEYS = ("slug", "after_submit_settings")
+
+_TIME = re.compile(r"(\d{1,2})(?::(\d{1,2})(?::\d{1,2}(?:\.\d+)?)?)?")
+
 
 def json_time(value: Optional[TimeLike]) -> Optional[Dict[str, str]]:
     """Convert a time to EnrolHQ's session time object, ``{"HH": "09", "mm": "30"}``.
@@ -24,18 +30,24 @@ def json_time(value: Optional[TimeLike]) -> Optional[Dict[str, str]]:
     server returns zero-padded strings and accepts strings or ints, so this
     emits the same shape it returns — a GET -> PUT round trip compares equal.
 
-    Accepts ``"09:30"``, :class:`datetime.time`, an ``{"HH", "mm"}`` object
-    (ints or strings) or ``None``.
+    Accepts ``"09:30"`` (seconds, as in ``"09:30:00"``, are ignored),
+    :class:`datetime.time`, an ``{"HH", "mm"}`` object (ints or strings) or
+    ``None``.
     """
     if value is None:
         return None
-    if isinstance(value, dict):
-        hours, minutes = int(value["HH"]), int(value["mm"])
-    elif isinstance(value, dt.time):
+    if isinstance(value, dt.time):
         hours, minutes = value.hour, value.minute
+    elif isinstance(value, dict):
+        try:
+            hours, minutes = int(value["HH"]), int(value["mm"])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(f"Invalid time: {value!r}") from None
     else:
-        h, _, m = str(value).strip().partition(":")
-        hours, minutes = int(h), int(m or 0)
+        match = _TIME.fullmatch(str(value).strip())
+        if not match:
+            raise ValueError(f"Invalid time: {value!r}")
+        hours, minutes = int(match.group(1)), int(match.group(2) or 0)
     if not (0 <= hours <= 23 and 0 <= minutes <= 59):
         raise ValueError(f"Invalid time: {value!r}")
     return {"HH": f"{hours:02d}", "mm": f"{minutes:02d}"}
@@ -93,7 +105,8 @@ class EventsResource(BaseResource):
     - ``slug`` and ``after_submit_settings`` keys must always be present.
       On create send ``slug=""`` and the server generates one;
       ``after_submit_settings=None`` uses the default confirmation.
-      :meth:`create` fills both in when missing.
+      :meth:`create` fills both in when missing; :meth:`update` copies them
+      from the current event.
     - ``sessions`` are nested and replaced wholesale on update — keep
       existing sessions by sending their ``id`` (see :func:`session`).
     - ``image`` is a base64 data URI (:func:`enrolhq.files.image_data_uri`),
@@ -141,13 +154,18 @@ class EventsResource(BaseResource):
         return self._post("staff-events/", json=payload)
 
     def update(self, event_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Update an event (full PUT).
+        """Update an event (full PUT). Start from :meth:`get`.
 
-        Send the current ``slug``, keep sessions by ``id`` and omit ``image``
-        to keep the current one. ``after_submit_settings`` defaults to
-        ``None`` when missing.
+        Keep sessions by ``id`` and omit ``image`` to keep the current one.
+        If ``slug`` or ``after_submit_settings`` is missing, it is copied from
+        the current event. Sending ``after_submit_settings=None`` resets the
+        post-submit action to the default confirmation.
         """
-        payload = {"after_submit_settings": None, **data}
+        payload = dict(data)
+        missing = [key for key in _REQUIRED_KEYS if key not in payload]
+        if missing:
+            current = self.get(event_id)
+            payload.update({key: current.get(key) for key in missing})
         return self._put(f"staff-events/{event_id}/", json=payload)
 
     def delete(self, event_id: str) -> Optional[Dict[str, Any]]:

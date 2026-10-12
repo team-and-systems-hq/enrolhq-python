@@ -51,6 +51,12 @@ class EventSettingsResource(BaseResource):
         label. With ``remove_others=True`` kinds not in *labels* are deleted
         (the PUT fails with 400 if an event still uses one).
 
+        Parents filter events by kind slug, so a ``ValueError`` is raised
+        before anything is written if a new label has no ASCII letters or
+        digits to build a slug from, or its slug matches another kind's
+        (labels differing only in punctuation). Use :meth:`update` with an
+        explicit ``slug`` for those.
+
         Returns:
             The resulting ``event_kind_options`` list.
         """
@@ -68,6 +74,28 @@ class EventSettingsResource(BaseResource):
         if not remove_others:
             wanted_labels = {label.lower() for label in labels}
             wanted += [k for k in current if k["label"].lower() not in wanted_labels]
+        _check_slugs(wanted)
         settings["event_kind_options"] = wanted
         result = self.update(settings) or self.get()
         return result.get("event_kind_options", [])
+
+
+def _check_slugs(kinds: List[Dict[str, Any]]) -> None:
+    """Raise if a new kind (no ``id``) has an empty slug or shares another kind's."""
+    for i, kind in enumerate(kinds):
+        if "id" in kind:
+            continue
+        label, slug = kind["label"], kind["slug"]
+        if not slug:
+            raise ValueError(
+                f"Can't derive a slug from event kind label {label!r}; "
+                "add it with update() and an explicit slug"
+            )
+        clash = next(
+            (k for j, k in enumerate(kinds) if j != i and k.get("slug") == slug), None
+        )
+        if clash:
+            raise ValueError(
+                f"Event kinds {clash['label']!r} and {label!r} would share the "
+                f"slug {slug!r}; rename one or set slugs with update()"
+            )
