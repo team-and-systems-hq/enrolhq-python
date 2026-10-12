@@ -156,6 +156,22 @@ def test_token_refresh_redirect_raises_with_real_status(monkeypatch):
     assert calls[0]["allow_redirects"] is False
 
 
+def test_token_refresh_failure_reports_real_status(monkeypatch):
+    from enrolhq import AuthenticationError
+    from enrolhq.auth import TokenAuth
+
+    def fake_post(url, **kwargs):
+        resp = requests.Response()
+        resp.status_code = 429
+        resp._content = b"Too Many Requests"
+        return resp
+
+    monkeypatch.setattr("enrolhq.auth.requests.post", fake_post)
+    with pytest.raises(AuthenticationError, match="^HTTP 429: ") as exc_info:
+        TokenAuth("https://x.enrolhq.net.au/api/v2/", "t").authenticate()
+    assert exc_info.value.status_code == 429
+
+
 def test_authentication_error_defaults_to_401():
     from enrolhq import AuthenticationError
     assert AuthenticationError(detail="nope").status_code == 401
@@ -594,6 +610,22 @@ def test_event_find_matches_exact_name():
     http = _Http({"results": rows, "next": None})
     assert EventsResource(http, BASE).find("Open Day 2027")["id"] == "2"
     assert http.requests[0][2]["search"] == "Open Day 2027"
+    assert len(http.requests) == 1  # no full scan on a search hit
+
+
+def test_event_find_falls_back_to_full_list():
+    from enrolhq.resources.events import EventsResource
+    rows = [{"id": "1", "name": "Open Day"}, {"id": "2", "name": "Principal's Tour"}]
+    http = _Http({"results": [], "next": None}, {"results": rows, "next": None})
+    assert EventsResource(http, BASE).find("Principal's Tour")["id"] == "2"
+    assert http.requests[0][2]["search"] == "Principal's Tour"
+    assert "search" not in http.requests[1][2]
+
+
+def test_event_find_returns_none_when_missing():
+    from enrolhq.resources.events import EventsResource
+    empty = {"results": [], "next": None}
+    assert EventsResource(_Http(empty, empty), BASE).find("Nope") is None
 
 
 # ── Metafield writes ────────────────────────────────────────

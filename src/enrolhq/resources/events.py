@@ -1,6 +1,7 @@
 """Events resource (staff-side)."""
 
 import datetime as dt
+import itertools
 import re
 from typing import Any, Dict, List, Optional, Union
 
@@ -120,8 +121,8 @@ class EventsResource(BaseResource):
     def list(self, *, page_size: int = 100, **filters: Any) -> PaginatedIterator:
         """Auto-paginate through all staff events.
 
-        Filters: ``end_datetime_gte``, ``end_datetime_lt``, ``search`` (name
-        prefix), ``ordering``.
+        Filters: ``end_datetime_gte``, ``end_datetime_lt``, ``search``
+        (full-text prefix match on the words of the name), ``ordering``.
         """
         return self._list("staff-events/", params=filters, page_size=page_size)
 
@@ -138,8 +139,13 @@ class EventsResource(BaseResource):
         return self._get(f"staff-events/{event_id}/")
 
     def find(self, name: str) -> Optional[Dict[str, Any]]:
-        """Return the first event whose name matches *name* exactly, or ``None``."""
-        for event in self.list(search=name):
+        """Return the first event whose name matches *name* exactly, or ``None``.
+
+        Tries the server's ``search`` first, then scans every event: ``search``
+        is a full-text match that misses some names, e.g. ``"Principal's
+        Tour"`` (the server strips the apostrophe from the query).
+        """
+        for event in itertools.chain(self.list(search=name), self.list()):
             if event.get("name") == name:
                 return event
         return None

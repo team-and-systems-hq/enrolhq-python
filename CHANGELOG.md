@@ -46,7 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `events.create()` now fills in the required `slug` and
   `after_submit_settings` keys, `events.update()` copies them from the current
   event when they are missing, and `events.find(name)` looks up an event by
-  name.
+  exact name (falling back to a full scan, because the server's full-text
+  `search` misses names like "Principal's Tour").
 - **`domain=` / `ENROLHQ_DOMAIN`** builds the base URL for schools hosted on
   `enrolhq.net.au` from `instance=`.
 - Examples `18_school_branding.py`, `19_tours_and_events.py` and
@@ -63,7 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Authorization` header and turned the POST/PUT into a GET. Writes and the
   token refresh no longer follow redirects; they raise an error naming the
   canonical URL. `AuthenticationError` takes an optional `status_code`, so a
-  redirected token refresh reports the real 3xx status, not 401.
+  token refresh that is redirected or fails (e.g. 429) reports the real status,
+  not 401.
 
 - **`docs/integration-service.md`** — how to build the service that receives
   EnrolHQ's outbound sync signals (the **Integration Service URL** on

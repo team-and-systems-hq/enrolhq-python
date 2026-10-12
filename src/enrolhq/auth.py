@@ -53,6 +53,7 @@ class TokenAuth:
             raise AuthenticationError(
                 detail=f"Token refresh failed: {text}",
                 response=err_resp,
+                status_code=getattr(err_resp, "status_code", None) or 401,
             ) from exc
 
         try:
