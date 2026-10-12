@@ -48,7 +48,7 @@ class CmsSettingsResource(BaseResource):
 
             client.cms_settings.update_fields({
                 "school_level_label": "Year",
-                "enquiry": {"page_header": "Enquire about Christ's College"},
+                "enquiry": {"page_header": "Enquire about Example Grammar"},
                 "event_booking": {"make_booking_button_label": "Book a tour"},
             })
         """

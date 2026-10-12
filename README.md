@@ -187,10 +187,10 @@ from enrolhq import EnrolHQClient, session
 client = EnrolHQClient()
 
 client.school.set_region(tzname="Pacific/Auckland", country="NZ")
-client.school.update_fields({"name": "Christ's College"})
+client.school.update_fields({"name": "Example Grammar"})
 
 campus = client.campuses.default()
-client.campuses.update_fields(campus["id"], {"telephone": "+6433668705"})
+client.campuses.update_fields(campus["id"], {"telephone": "+6490000000"})
 client.campuses.set_images(
     campus["id"],
     logo_dark="logo-dark.png",
