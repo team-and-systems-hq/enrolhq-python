@@ -63,7 +63,14 @@ You can also pass credentials directly:
 client = EnrolHQClient(instance="yourschool", api_token="your_token")
 # or
 client = EnrolHQClient(base_url="https://yourschool.enrolhq.com.au/api/v2/", api_token="your_token")
+# schools hosted on enrolhq.net.au (or set ENROLHQ_DOMAIN=enrolhq.net.au)
+client = EnrolHQClient(instance="yourschool", domain="enrolhq.net.au", api_token="your_token")
 ```
+
+Always use the school's **canonical host**. EnrolHQ answers any other host with
+a 301 redirect, and following a redirect drops the `Authorization` header and
+turns a POST/PUT into a GET. The SDK therefore does not follow redirects on
+writes; it raises `EnrolHQError` naming the canonical URL instead.
 
 ## Pagination
 
@@ -109,8 +116,14 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Staff | `client.staff` | list, get, create, update, toggle_active |
 | Analytics | `client.analytics` | statistics, conversion, status_conversion |
 | Reference Data | `client.reference_data` | campuses, countries, languages, application_status_settings, etc. |
-| CMS Settings | `client.cms_settings` | get |
-| Metafields | `client.metafields` | get, field_settings, default_field_settings |
+| CMS Settings | `client.cms_settings` | get, update, update_fields |
+| Metafields | `client.metafields` | get, field_settings, default_field_settings, update_field, create_field, delete_field, toggle_block, mutate_ordering |
+| School settings | `client.school` | get, update, update_fields, set_region, commencement dates |
+| Campuses | `client.campuses` | list, get, default, create, update, update_fields, set_images |
+| Look and feel | `client.look_and_feel` | get, update, set_palette, set_form_header_themes, set_fonts, font_library, upload_font, find_or_upload_font |
+| Event settings | `client.event_settings` | get, update, update_fields, kind_options, ensure_kinds |
+| Entry grade settings | `client.entry_grade_settings` | get, update, modify_grades |
+| Payment settings | `client.payment_settings` | get, update, update_fields |
 
 ## Emergency contacts, medical data and consents
 
@@ -160,6 +173,69 @@ for record in client.forms.iter_answers(form=form["id"], is_completed=True):
 ```
 
 See [`examples/16_emergency_contacts_and_consents.py`](examples/16_emergency_contacts_and_consents.py).
+
+## Configuring a school
+
+Everything set up under *Settings* when onboarding a school can be written
+through the API: name and region, campus contact details and branding images,
+colours and fonts, form copy and policy documents, year levels, event kinds and
+tours, "How did you hear about us?" options, and currency/GST.
+
+```python
+from enrolhq import EnrolHQClient, session
+
+client = EnrolHQClient()
+
+client.school.set_region(tzname="Pacific/Auckland", country="NZ")
+client.school.update_fields({"name": "Christ's College"})
+
+campus = client.campuses.default()
+client.campuses.update_fields(campus["id"], {"telephone": "+6433668705"})
+client.campuses.set_images(
+    campus["id"],
+    logo_dark="logo-dark.png",
+    favicon="favicon-512.png",
+    default_header_image="campus-1920x600.jpg",
+)
+
+client.look_and_feel.set_palette(primary_color="#08080A", secondary_color="#8B7347")
+brand = client.look_and_feel.find_or_upload_font("Playfair Display", "pf.woff", "pf.woff2")
+client.look_and_feel.set_fonts(brand=brand["id"])
+
+client.cms_settings.update_fields({"enquiry": {"page_header": "Enquire with us"}})
+
+kinds = client.event_settings.ensure_kinds(["School Tour"])
+client.events.create({
+    "name": "Principal's Tour",
+    "kind": kinds[0]["id"],
+    "campus": campus["id"],
+    "sessions": [session("Tuesday tour", "2027-02-02", "09:30", "10:30", capacity=20)],
+})
+```
+
+Things the settings endpoints have in common:
+
+- **No PATCH.** Each object takes a full PUT validated in full. The
+  `update_fields()` helpers do GET → deep-merge → PUT, so you only pass what
+  changes. Nested dicts merge; wrap a value in `Replace(...)` to replace a dict
+  wholesale (e.g. a country, which the server looks up by `id` first).
+  `school.set_region()` and `campuses.update_fields()` do this for `country`.
+- **Nested lists are replaced wholesale.** Rows with a known `id` are updated,
+  rows without one are created, and existing rows you leave out are deleted.
+  This applies to event sessions, event kinds, attendance types and policy
+  items.
+- **Files are base64 data URIs in the JSON body, not multipart uploads.**
+  `image_data_uri()` and `file_data_uri()` build them; PNG/JPEG/WebP only, so
+  convert SVG, ICO and GIF first. A GET returns URLs, which the server rejects
+  on write; the campus helpers only send the image slots you change.
+- **Permissions.** A permanent API token belongs to a superuser and can write
+  all of this. With a regular login, the default *Admin* role covers school,
+  CMS, campus and metafields settings, and *Registrar* covers events, event
+  settings, payments and email.
+
+See [`examples/18_school_branding.py`](examples/18_school_branding.py),
+[`19_tours_and_events.py`](examples/19_tours_and_events.py) and
+[`20_region_and_year_levels.py`](examples/20_region_and_year_levels.py).
 
 ## Receiving sync signals (integration service)
 

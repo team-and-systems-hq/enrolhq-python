@@ -468,6 +468,49 @@ class TestEvents:
         assert isinstance(page, PaginatedResponse)
         assert isinstance(page.count, int)
 
+    def test_preview(self, client):
+        assert client.events.preview() is not None
+
+
+# ── School configuration (read-only) ──────────────────────
+
+class TestSchoolConfiguration:
+    def test_school_settings(self, client):
+        school = client.school.get()
+        assert "name" in school
+        assert "tzname" in school["school"]
+        assert "alpha_2_code" in school["school"]["country"]
+
+    def test_commencement_dates(self, client):
+        assert isinstance(client.school.commencement_dates(), list)
+
+    def test_default_campus_has_image_slots(self, client):
+        from enrolhq.resources.campuses import IMAGE_SLOTS
+        campus = client.campuses.default()
+        assert set(IMAGE_SLOTS) <= set(campus["cms_images"])
+
+    def test_look_and_feel(self, client):
+        from enrolhq.resources.look_and_feel import FONT_SLOTS, FORM_CODES
+        laf = client.look_and_feel.get()
+        assert set(laf["palette"]) == {"primary_color", "secondary_color"}
+        assert set(laf["form_header_themes"]) == set(FORM_CODES)
+        assert set(laf["fonts"]) == set(FONT_SLOTS)
+        assert isinstance(client.look_and_feel.font_library(), list)
+
+    def test_event_settings(self, client):
+        settings = client.event_settings.get()
+        assert all("slug" in k for k in settings["event_kind_options"])
+        assert len(client.event_settings.kind_options()) == len(
+            settings["event_kind_options"]
+        )
+
+    def test_entry_grade_settings_has_every_grade(self, client):
+        rows = client.entry_grade_settings.get()["entry_grade_settings"]
+        assert sorted(r["entry_grade"] for r in rows) == list(range(-5, 14))
+
+    def test_payment_settings(self, client):
+        assert "currency" in client.payment_settings.get()
+
 
 # ── Analytics ───────────────────────────────────────────────
 

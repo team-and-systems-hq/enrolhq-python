@@ -58,8 +58,17 @@ class HttpClient:
         self.timeout = timeout
 
     def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
-        """Send an HTTP request, retrying once on 401."""
+        """Send an HTTP request, retrying once on 401.
+
+        Writes do not follow redirects: EnrolHQ answers a non-canonical host
+        (e.g. ``school.enrolhq.com.au`` for a ``.net.au`` school) with a 301,
+        and following it would drop the ``Authorization`` header and turn the
+        POST/PUT into a GET. A redirect on a write raises :class:`EnrolHQError`
+        naming the canonical URL instead.
+        """
         kwargs.setdefault("timeout", self.timeout)
+        if method.upper() != "GET":
+            kwargs.setdefault("allow_redirects", False)
         headers = kwargs.pop("headers", {})
         headers.update(self.auth.get_headers())
         kwargs["headers"] = headers
@@ -76,6 +85,14 @@ class HttpClient:
                 resp = self.session.request(method, url, **kwargs)
             except requests.RequestException as exc:
                 raise EnrolHQError(f"{method} {url} failed: {exc}") from exc
+
+        if resp.is_redirect and not kwargs.get("allow_redirects", True):
+            location = resp.headers.get("Location", "")
+            raise EnrolHQError(
+                f"{method} {url} was redirected ({resp.status_code}) to "
+                f"{location}. Use the school's canonical host in base_url "
+                "(or pass domain=) so writes are not redirected."
+            )
 
         if not resp.ok:
             self._raise_for_status(resp)

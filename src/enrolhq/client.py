@@ -10,19 +10,31 @@ from .resources import (
     AnalyticsResource,
     ApplicationsResource,
     AuditLogResource,
+    CampusesResource,
     CmsSettingsResource,
     DocumentsResource,
     EmailLogResource,
+    EntryGradeSettingsResource,
     EventBookingsResource,
+    EventSettingsResource,
     EventsResource,
     FormsResource,
     LeadsResource,
+    LookAndFeelResource,
     MetafieldsResource,
     NotesResource,
+    PaymentSettingsResource,
     PaymentsResource,
     ReferenceDataResource,
+    SchoolResource,
     StaffResource,
 )
+
+#: Default domain used to build the base URL from ``instance``. Schools on
+#: another domain (e.g. ``enrolhq.net.au``) must pass ``domain=`` or set
+#: ``ENROLHQ_DOMAIN`` — EnrolHQ redirects non-canonical hosts, which breaks
+#: authenticated writes.
+DEFAULT_DOMAIN = "enrolhq.com.au"
 
 
 def _load_dotenv() -> dict:
@@ -58,6 +70,9 @@ class EnrolHQClient:
         # Or from a .env file (ENROLHQ_BASE_URL / ENROLHQ_INSTANCE + ENROLHQ_API_TOKEN)
         client = EnrolHQClient()
 
+        # Schools hosted on enrolhq.net.au
+        client = EnrolHQClient(instance="myschool", domain="enrolhq.net.au", api_token="...")
+
         # List applications
         for app in client.applications.list(entry_year=2026):
             print(app["first_name"])
@@ -69,6 +84,7 @@ class EnrolHQClient:
         api_token: Optional[str] = None,
         instance: Optional[str] = None,
         base_url: Optional[str] = None,
+        domain: Optional[str] = None,
         timeout: object = DEFAULT_TIMEOUT,
     ) -> None:
         dotenv = _load_dotenv()
@@ -83,6 +99,8 @@ class EnrolHQClient:
         if base_url is None and instance is None:
             base_url = _resolve(None, "ENROLHQ_BASE_URL")
             instance = _resolve(None, "ENROLHQ_INSTANCE")
+        if domain is None:
+            domain = _resolve(None, "ENROLHQ_DOMAIN") or DEFAULT_DOMAIN
 
         if not api_token:
             raise ValueError(
@@ -92,7 +110,7 @@ class EnrolHQClient:
         if base_url:
             self.base_url = base_url.rstrip("/") + "/"
         elif instance:
-            self.base_url = f"https://{instance}.enrolhq.com.au/api/v2/"
+            self.base_url = f"https://{instance}.{domain.strip('.')}/api/v2/"
         else:
             raise ValueError(
                 "Provide instance, base_url, or set ENROLHQ_BASE_URL / ENROLHQ_INSTANCE"
@@ -117,6 +135,15 @@ class EnrolHQClient:
         self.reference_data = ReferenceDataResource(self._http, self.base_url)
         self.cms_settings = CmsSettingsResource(self._http, self.base_url)
         self.metafields = MetafieldsResource(self._http, self.base_url)
+        # School configuration
+        self.school = SchoolResource(self._http, self.base_url)
+        self.campuses = CampusesResource(self._http, self.base_url)
+        self.look_and_feel = LookAndFeelResource(self._http, self.base_url)
+        self.event_settings = EventSettingsResource(self._http, self.base_url)
+        self.entry_grade_settings = EntryGradeSettingsResource(
+            self._http, self.base_url
+        )
+        self.payment_settings = PaymentSettingsResource(self._http, self.base_url)
 
     def __repr__(self) -> str:
         return f"EnrolHQClient(base_url={self.base_url!r})"

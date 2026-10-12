@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **School configuration resources** — everything set under *Settings* when
+  onboarding a school:
+  - `client.school` (`school/`): `get`, `update`, `update_fields`,
+    `set_region(tzname=, country=)` and commencement date CRUD.
+  - `client.campuses` (`school-campuses/`): `list`, `get`, `default`, `create`,
+    `update`, `update_fields`, and `set_images(campus_id, **slots)` for the 20
+    branding image slots (`IMAGE_SLOTS`: logos, favicon, header and background
+    images, email logos). `update_fields` replaces
+    `residential_address.country` rather than merging it.
+  - `client.look_and_feel` (`cms-look-and-feel/`, `cms-fonts/`):
+    `set_palette`, `set_form_header_themes`, `set_fonts`, `font_library`,
+    `upload_font` and `find_or_upload_font`.
+  - `client.event_settings` (`event-settings/`): `get`, `update`,
+    `update_fields`, `kind_options` and `ensure_kinds(labels)`. Before
+    writing, `ensure_kinds` rejects a new label that yields an empty slug or
+    one another kind already uses.
+  - `client.entry_grade_settings` (`entry-grade-settings/`): `get`, `update`
+    and `modify_grades(fn, **top_level)`. Year 13 is hidden by default.
+  - `client.payment_settings` (`payment/settings/`): `get`, `update` and
+    `update_fields` (currency, GST, fees).
+  - `client.cms_settings.update()` / `update_fields()`. CMS settings were
+    previously read-only in the SDK.
+  - `client.metafields.update_field()`, `create_field()`, `delete_field()`,
+    `toggle_block()` and `mutate_ordering()`, e.g. to set the "How did you hear
+    about us?" options.
+- **`enrolhq.files`**: `image_data_uri()` and `file_data_uri()` build the base64
+  data URIs that settings endpoints expect for images, documents and fonts.
+  They check types up front: SVG, ICO and GIF are rejected, and a filename is
+  required for documents.
+- **`Replace`** and `deep_merge` support read-modify-write on full-PUT
+  endpoints. `Replace` swaps a nested dict wholesale instead of merging it.
+- **`session()` and `json_time()`** build event sessions. Times become the
+  server's `{"HH": "09", "mm": "30"}` shape, so a GET → PUT round trip compares
+  equal. `json_time()` also accepts `"HH:MM:SS"`, ignoring the seconds.
+  `events.create()` now fills in the required `slug` and
+  `after_submit_settings` keys, `events.update()` copies them from the current
+  event when they are missing, and `events.find(name)` looks up an event by
+  exact name (falling back to a full scan, because the server's full-text
+  `search` misses names like "Principal's Tour").
+- **`domain=` / `ENROLHQ_DOMAIN`** builds the base URL for schools hosted on
+  `enrolhq.net.au` from `instance=`.
+- Examples `18_school_branding.py`, `19_tours_and_events.py` and
+  `20_region_and_year_levels.py` (dry run unless `--apply`), with Examples Guide
+  sections, a README "Configuring a school" section, offline unit tests
+  (`tests/test_configuration.py`) and read-only integration tests.
+
+### Fixed
+
+- `events.preview()` called `staff-events/preview/`, which does not exist (404).
+  It now calls `staff-events-preview/`.
+- Writes to a non-canonical host (e.g. `school.enrolhq.com.au` for a
+  `.net.au` school) used to follow the server's 301. That dropped the
+  `Authorization` header and turned the POST/PUT into a GET. Writes and the
+  token refresh no longer follow redirects; they raise an error naming the
+  canonical URL. `AuthenticationError` takes an optional `status_code`, so a
+  token refresh that is redirected or fails (e.g. 429) reports the real status,
+  not 401.
+
 - **`docs/integration-service.md`** — how to build the service that receives
   EnrolHQ's outbound sync signals (the **Integration Service URL** on
   *Settings > Integrations*). Covers both protocols (legacy synchronous and the
