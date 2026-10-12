@@ -1,5 +1,6 @@
 """Base resource with shared HTTP helpers."""
 
+import copy
 from typing import Any, Dict, List, Optional
 
 from ..http import HttpClient
@@ -8,6 +9,46 @@ from ..pagination import (
     PaginatedIterator,
     PaginatedResponse,
 )
+
+
+class Replace:
+    """Mark a value in a ``changes`` dict to replace, not merge.
+
+    :func:`deep_merge` merges nested dicts key by key. Wrap a dict in
+    ``Replace`` when the server looks it up as a whole — e.g. a country, which
+    is resolved by ``id`` before ``alpha_2_code``, so merging
+    ``{"alpha_2_code": "NZ"}`` into the current country would keep the old
+    ``id`` and silently stay on the old country::
+
+        client.school.update_fields(
+            {"school": {"country": Replace({"alpha_2_code": "NZ"})}}
+        )
+    """
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def __repr__(self) -> str:
+        return f"Replace({self.value!r})"
+
+
+def deep_merge(base: Dict[str, Any], changes: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of *base* with *changes* merged in.
+
+    Nested dicts are merged key by key; every other value (including lists)
+    in *changes* replaces the value in *base*, as does any value wrapped in
+    :class:`Replace`. Used for read-modify-write on settings endpoints, which
+    only accept a full PUT.
+    """
+    merged = copy.deepcopy(base)
+    for key, value in changes.items():
+        if isinstance(value, Replace):
+            merged[key] = copy.deepcopy(value.value)
+        elif isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
 
 
 class BaseResource:
@@ -80,8 +121,24 @@ class BaseResource:
             return None
         return resp.json()
 
-    def _delete(self, endpoint: str) -> Optional[Dict[str, Any]]:
-        resp = self._http.delete(self._url(endpoint))
+    def _delete(
+        self, endpoint: str, params: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
+        if params:
+            resp = self._http.delete(self._url(endpoint), params=params)
+        else:
+            resp = self._http.delete(self._url(endpoint))
         if not resp.content:
             return None
         return resp.json()
+
+    def _read_modify_write(
+        self, endpoint: str, changes: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """GET a settings object, deep-merge *changes*, PUT the whole object.
+
+        Settings endpoints have no PATCH and validate the PUT body in full,
+        so partial updates must round-trip the current object.
+        """
+        current = self._get(endpoint)
+        return self._put(endpoint, json=deep_merge(current, changes))

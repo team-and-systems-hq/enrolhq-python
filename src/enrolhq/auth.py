@@ -34,7 +34,17 @@ class TokenAuth:
                 url,
                 headers={"Authorization": f"Token {self.api_token}"},
                 timeout=self.timeout,
+                allow_redirects=False,
             )
+            if resp.is_redirect:
+                raise AuthenticationError(
+                    detail=(
+                        f"Token refresh was redirected to "
+                        f"{resp.headers.get('Location', '')}. Use the school's "
+                        "canonical host in base_url (or pass domain=)."
+                    ),
+                    response=resp,
+                )
             resp.raise_for_status()
         except requests.RequestException as exc:
             err_resp = getattr(exc, "response", None)

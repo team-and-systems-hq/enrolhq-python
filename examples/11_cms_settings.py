@@ -1,8 +1,9 @@
 """Read the school's CMS / form configuration settings.
 
-The `cms-settings/` endpoint is read-only and returns a single config object
-covering enquiry & event-booking copy, form labels, terms & conditions,
-parent-dashboard visibility flags, and the policy documents shown to applicants.
+The `cms-settings/` endpoint returns a single config object covering enquiry &
+event-booking copy, form labels, terms & conditions, parent-dashboard
+visibility flags, and the policy documents shown to applicants. To change it,
+use `client.cms_settings.update_fields({...})` (see 18_school_branding.py).
 """
 
 from enrolhq import EnrolHQClient
