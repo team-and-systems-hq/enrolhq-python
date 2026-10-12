@@ -46,7 +46,7 @@ class SchoolResource(BaseResource):
         Example::
 
             client.school.update_fields({
-                "name": "Christ's College",
+                "name": "Example Grammar",
                 "business_number_abbreviation": "NZBN",
             })
         """
