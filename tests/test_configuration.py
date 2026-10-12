@@ -76,8 +76,8 @@ class _Http:
 # ── Client ──────────────────────────────────────────────────
 
 def test_client_domain_param():
-    c = EnrolHQClient(instance="christscollege", domain="enrolhq.net.au", api_token="t")
-    assert c.base_url == "https://christscollege.enrolhq.net.au/api/v2/"
+    c = EnrolHQClient(instance="myschool", domain="enrolhq.net.au", api_token="t")
+    assert c.base_url == "https://myschool.enrolhq.net.au/api/v2/"
 
 
 def test_client_domain_from_env(monkeypatch):
@@ -244,10 +244,10 @@ def _school():
 def test_school_update_fields_round_trips():
     from enrolhq.resources.school import SchoolResource
     http = _Http(_school(), {})
-    SchoolResource(http, BASE).update_fields({"name": "Christ's College"})
+    SchoolResource(http, BASE).update_fields({"name": "Example Grammar"})
     method, url, body = http.writes()[0]
     assert (method, url) == ("PUT", BASE + "school/")
-    assert body["name"] == "Christ's College"
+    assert body["name"] == "Example Grammar"
     assert body["lead_references"] == [{"id": "r1"}]  # untouched keys preserved
     assert body["school"]["tzname"] == "Australia/Sydney"
 
@@ -289,10 +289,10 @@ def _campus():
 def test_campus_update_fields_sends_only_changed_images():
     from enrolhq.resources.campuses import CampusesResource
     http = _Http(_campus(), {})
-    CampusesResource(http, BASE).update_fields("c1", {"telephone": "+6433668705"})
+    CampusesResource(http, BASE).update_fields("c1", {"telephone": "+6490000000"})
     method, url, body = http.writes()[0]
     assert (method, url) == ("PUT", BASE + "school-campuses/c1/")
-    assert body["telephone"] == "+6433668705"
+    assert body["telephone"] == "+6490000000"
     assert body["cms_images"] == {}  # GET URLs are never sent back
 
 
@@ -312,11 +312,11 @@ def test_campus_update_fields_replaces_country():
     from enrolhq.resources.campuses import CampusesResource
     http = _Http(_campus(), {})
     CampusesResource(http, BASE).update_fields(
-        "c1", {"residential_address": {"state": "Canterbury",
+        "c1", {"residential_address": {"state": "Auckland",
                                        "country": {"alpha_2_code": "NZ"}}}
     )
     address = http.writes()[0][2]["residential_address"]
-    assert address == {"street_address": "", "state": "Canterbury",
+    assert address == {"street_address": "", "state": "Auckland",
                        "country": {"alpha_2_code": "NZ"}}  # no stale id
 
 
