@@ -53,3 +53,47 @@ class CmsSettingsResource(BaseResource):
             })
         """
         return self._read_modify_write("cms-settings/", changes)
+
+    # ── Custom Scripts ──────────────────────────────────────────
+
+    def custom_scripts(self) -> str:
+        """Get the HTML from *Settings > Custom Scripts* (``extra-frontend-code/``).
+
+        It is injected into the ``<head>`` of every parent-facing page
+        (forms, portal, previews), but never the staff dashboard or print
+        views. Schools keep branding CSS and tracking scripts here.
+        """
+        return self._get("extra-frontend-code/").get("page_head_html", "")
+
+    def set_custom_scripts(self, html: str) -> Optional[Dict[str, Any]]:
+        """Replace all of Custom Scripts with *html*.
+
+        This is one block of HTML for the whole parent site, and it takes
+        effect immediately. To add a rule, use :meth:`append_custom_scripts`,
+        which keeps what is already there.
+        """
+        return self._patch("extra-frontend-code/", json={"page_head_html": html})
+
+    def append_custom_scripts(self, snippet: str, *, marker: str) -> bool:
+        """Add *snippet* to the end of Custom Scripts, once.
+
+        *marker* is a string inside *snippet* (e.g. a CSS comment naming the
+        form it serves). If Custom Scripts already contains it, nothing is
+        written. Returns ``True`` if the snippet was added::
+
+            client.cms_settings.append_custom_scripts(
+                "<style>\\n/* Example form: compact boxes */\\n"
+                ".compact { margin-top: -2.25rem; }\\n</style>",
+                marker="/* Example form: compact boxes */",
+            )
+
+        The server strips trailing newlines from the stored HTML.
+        """
+        if not marker or marker not in snippet:
+            raise ValueError("marker must be a non-empty string inside snippet")
+        current = self.custom_scripts()
+        if marker in current:
+            return False
+        joined = current.rstrip("\n") + "\n" + snippet if current else snippet
+        self.set_custom_scripts(joined)
+        return True

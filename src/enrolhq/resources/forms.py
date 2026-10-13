@@ -95,6 +95,142 @@ class FormsResource(BaseResource):
                 return form
         return None
 
+    # ── Building and editing forms ──────────────────────────────
+    # See docs/custom-forms.md for the schema, element types and workflow.
+
+    def definition(self, form_id: str) -> Dict[str, Any]:
+        """Get a custom form's full staff definition, for editing.
+
+        Returns every setting plus ``schema``: the form's **latest** schema
+        version (``schema_data``, ``local_fields_settings``,
+        ``is_published``). That is the unpublished draft when one exists, so
+        it can differ from what parents see (:meth:`get`). Built-in (stub)
+        forms such as the enquiry form are not editable here and return 404.
+        """
+        return self._get(f"forms/staff/{form_id}/")
+
+    def update_definition(
+        self, form_id: str, data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Replace a custom form (full PUT). Start from :meth:`definition`.
+
+        The server validates the whole object, so send everything back. The
+        ``schema`` in *data* is saved as a new version: a draft when
+        ``schema["is_published"]`` is false, otherwise published.
+        """
+        return self._put(f"forms/staff/{form_id}/", json=data)
+
+    def save_schema(
+        self,
+        form_id: str,
+        schema_data: List[Dict[str, Any]],
+        *,
+        local_fields_settings: Optional[Dict[str, Any]] = None,
+        publish: bool = False,
+        settings: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Save new steps and elements for a custom form, as a draft by default.
+
+        Reads the form, replaces its ``schema`` and writes the whole form
+        back.
+
+        Args:
+            form_id: UUID of the custom form.
+            schema_data: The steps, each ``{"title", "name", "elements"}``.
+            local_fields_settings: Per-form overrides of the school's field
+                settings, ``{block: {field: {"enabled", "mandatory"}}}``.
+                Replaces the current overrides; ``None`` keeps them. Check
+                the keys with :meth:`check_local_fields` first: the server
+                drops unknown ones without an error.
+            publish: ``False`` (default) saves the form's single unpublished
+                version, creating or updating it. Parents keep seeing the
+                published version, and :meth:`preview` shows the draft.
+                ``True`` publishes, which changes what parents see.
+            settings: Other top-level form settings to change in the same
+                call, e.g. ``{"allowed_application_statuses": [10]}``.
+
+        Returns:
+            The saved form, as :meth:`definition` would return it.
+
+        The PUT replaces anything edited in the dashboard builder since you
+        last saved. Compare :meth:`definition` with your last save first if
+        staff may have edited the form.
+        """
+        current = self.definition(form_id)
+        if local_fields_settings is None:
+            current_schema = current.get("schema") or {}
+            local_fields_settings = current_schema.get("local_fields_settings") or {}
+        body = {**current, **(settings or {})}
+        body["schema"] = {
+            "schema_data": schema_data,
+            "local_fields_settings": local_fields_settings,
+            "is_published": publish,
+        }
+        return self.update_definition(form_id, body)
+
+    def check_local_fields(
+        self, local_fields_settings: Dict[str, Dict[str, Any]]
+    ) -> List[str]:
+        """Return the problems with per-form field overrides (empty if none).
+
+        Checks each ``{block: {field: ...}}`` key against the school's field
+        settings (``GET metafields/``). The server silently drops blocks and
+        fields it doesn't know, and refuses to disable or make optional a
+        block's permanent fields (e.g. a student's ``first_name``).
+        """
+        field_settings = self._get("metafields/").get("field_settings", {})
+        problems: List[str] = []
+        for block, fields in local_fields_settings.items():
+            known = field_settings.get(block)
+            if known is None:
+                problems.append(f"{block}: no such field settings block")
+                continue
+            permanent = set(known.get("_meta", {}).get("permanent", []))
+            for name, flags in fields.items():
+                if name not in known or name == "_meta":
+                    problems.append(f"{block}.{name}: no such field")
+                elif name in permanent and not (
+                    flags.get("enabled") and flags.get("mandatory")
+                ):
+                    problems.append(
+                        f"{block}.{name}: permanent field, must stay enabled "
+                        "and mandatory"
+                    )
+        return problems
+
+    def preview(self, form_slug: str) -> Dict[str, Any]:
+        """Get the staff preview of a form's latest version, draft included.
+
+        Returns the rendered ``schema`` (its ``metafields`` key holds the
+        effective field settings, with this form's overrides applied) and an
+        ``initial_payload`` for a sample profile, keyed by element name, which
+        shows the fields each block will send. Keyed by **slug**.
+        """
+        return self._get(f"forms/previews/{form_slug}/")
+
+    def validate_step(
+        self, form_id: str, step: int, answers: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Validate one step's answers against a form, saving nothing.
+
+        Runs the same validation as a parent's submission, against the
+        form's latest version (draft included), without a profile. Raises
+        :class:`~enrolhq.exceptions.ValidationError` with the field errors in
+        ``.detail``, keyed by element name. A wrong-type value for an element
+        being rejected by name shows the element is part of the form::
+
+            client.forms.validate_step(form_id, 5, {"total_hours": ["x"]})
+            # ValidationError: {'total_hours': ['Not a valid string.']}
+
+        Args:
+            form_id: UUID of the custom form.
+            step: 1-based step number.
+            answers: ``{element_name: value}`` for that step.
+        """
+        return self._post(
+            f"forms/previews/submit/{form_id}/preview/{int(step)}/", json=answers
+        )
+
     # ── Submits ─────────────────────────────────────────────────
 
     def submits(self, *, page_size: int = 100, **filters: Any) -> PaginatedIterator:

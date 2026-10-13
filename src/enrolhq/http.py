@@ -121,6 +121,9 @@ class HttpClient:
     def put(self, url: str, json: Any = None, **kwargs: Any) -> requests.Response:
         return self.request("PUT", url, json=json, **kwargs)
 
+    def patch(self, url: str, json: Any = None, **kwargs: Any) -> requests.Response:
+        return self.request("PATCH", url, json=json, **kwargs)
+
     def delete(self, url: str, **kwargs: Any) -> requests.Response:
         return self.request("DELETE", url, **kwargs)
 
