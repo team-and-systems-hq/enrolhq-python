@@ -67,6 +67,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token refresh that is redirected or fails (e.g. 429) reports the real status,
   not 401.
 
+- **`docs/custom-forms.md`** — how to build and edit custom forms through the
+  API: form settings versus versioned schemas (draft, publish, preview), the
+  `forms/staff/{id}/` read-modify-write, the step and element schema with every
+  element type, per-form field settings (`local_fields_settings`), where answers
+  are stored, checking a form with the no-save preview validation endpoint,
+  styling through `css_class` and *Custom Scripts*, and a workflow for building
+  a form from a school's document.
+- **Form building on `client.forms`:** `definition(form_id)` (`GET
+  forms/staff/{id}/`, the latest schema version, draft included),
+  `update_definition()` (full PUT), `save_schema(form_id, steps,
+  local_fields_settings=, publish=False, settings=)` (draft by default; keeps
+  the form's settings and, unless given, its field overrides),
+  `check_local_fields()` (unknown or permanent override keys, which the server
+  would otherwise drop or reject), `preview(form_slug)` and
+  `validate_step(form_id, step, answers)` (the submission validation, saving
+  nothing).
+- **Custom Scripts on `client.cms_settings`:** `custom_scripts()`,
+  `append_custom_scripts(snippet, marker=)` (adds once, keeps the school's
+  existing HTML) and `set_custom_scripts(html)` (`extra-frontend-code/`, parent
+  pages only).
+- `HttpClient.patch()`. Like the other writes, it does not follow redirects.
 - **`docs/integration-service.md`** — how to build the service that receives
   EnrolHQ's outbound sync signals (the **Integration Service URL** on
   *Settings > Integrations*). Covers both protocols (legacy synchronous and the

@@ -121,6 +121,12 @@ class BaseResource:
             return None
         return resp.json()
 
+    def _patch(self, endpoint: str, json: Any = None) -> Optional[Dict[str, Any]]:
+        resp = self._http.patch(self._url(endpoint), json=json)
+        if not resp.content:
+            return None
+        return resp.json()
+
     def _delete(
         self, endpoint: str, params: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:

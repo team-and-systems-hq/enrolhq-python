@@ -104,7 +104,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 |----------|--------|------------|
 | Applications | `client.applications` | list, get, create, update, count, actions, bulk ops |
 | Leads | `client.leads` | list, get, create, update, references, create_reference |
-| Forms | `client.forms` | list, get, find, submits, get_submit, answers, consents, iter_answers, export_submits |
+| Forms | `client.forms` | list, get, find, definition, save_schema, update_definition, check_local_fields, preview, validate_step, submits, get_submit, answers, consents, iter_answers, export_submits |
 | Documents | `client.documents` | list, upload, download, delete |
 | Notes | `client.notes` | list, create |
 | Activity Log | `client.activity_log` | list, create |
@@ -116,7 +116,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Staff | `client.staff` | list, get, create, update, toggle_active |
 | Analytics | `client.analytics` | statistics, conversion, status_conversion |
 | Reference Data | `client.reference_data` | campuses, countries, languages, application_status_settings, etc. |
-| CMS Settings | `client.cms_settings` | get, update, update_fields |
+| CMS Settings | `client.cms_settings` | get, update, update_fields, custom_scripts, append_custom_scripts, set_custom_scripts |
 | Metafields | `client.metafields` | get, field_settings, default_field_settings, update_field, create_field, delete_field, toggle_block, mutate_ordering |
 | School settings | `client.school` | get, update, update_fields, set_region, commencement dates |
 | Campuses | `client.campuses` | list, get, default, create, update, update_fields, set_images |
@@ -254,6 +254,23 @@ via `POST {school_domain}/api/v2/integrations/sync/finished/`.
 See [docs/integration-service.md](docs/integration-service.md) for the payload
 shapes, response schemas, what the token and timeout actually control, and a
 working receiver.
+
+## Building custom forms
+
+Build or change a form's steps and questions through the API, for example
+from a school's Word or PDF document. Save the new schema as a draft, check
+it with the staff preview and the no-save step validation, then publish:
+
+```python
+assert not client.forms.check_local_fields(overrides)
+client.forms.save_schema(form_id, steps, local_fields_settings=overrides)  # draft
+client.forms.validate_step(form_id, 1, step_one_answers)                  # saves nothing
+client.forms.save_schema(form_id, steps, publish=True)                     # parents see it
+```
+
+See [docs/custom-forms.md](docs/custom-forms.md) for the schema and element
+types, per-form field settings, where answers are stored, styling, and a
+step-by-step workflow.
 
 ## Error handling
 

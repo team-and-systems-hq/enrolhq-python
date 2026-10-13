@@ -232,6 +232,45 @@ class TestForms:
             client.forms.get_submit("00000000-0000-0000-0000-000000000000")
 
 
+class TestFormBuilding:
+    """Read-only: nothing here saves a schema or a submission."""
+
+    @pytest.fixture(scope="class")
+    def custom_form(self, client):
+        for form in client.forms.list(page_size=200):
+            if form["kind"] == "CUSTOM":
+                return form
+        pytest.skip("No custom forms in this instance")
+
+    def test_definition_has_latest_schema(self, client, custom_form):
+        schema = client.forms.definition(custom_form["id"])["schema"]
+        assert {"schema_data", "local_fields_settings", "is_published"} <= set(schema)
+        for step in schema["schema_data"]:
+            assert {"title", "name", "elements"} <= set(step)
+
+    def test_check_local_fields_flags_unknown_and_permanent(self, client):
+        problems = client.forms.check_local_fields({
+            "parent": {"no_such_field": {"enabled": True, "mandatory": False}},
+            "profile": {"first_name": {"enabled": False, "mandatory": False}},
+        })
+        assert problems == [
+            "parent.no_such_field: no such field",
+            "profile.first_name: permanent field, must stay enabled and mandatory",
+        ]
+
+    def test_preview_has_effective_field_settings(self, client, custom_form):
+        preview = client.forms.preview(custom_form["form_slug"])
+        assert isinstance(preview["schema"]["metafields"], dict)
+        assert isinstance(preview["initial_payload"], dict)
+
+    def test_validate_step_reports_field_errors(self, client, custom_form):
+        from enrolhq.exceptions import ValidationError
+        try:
+            client.forms.validate_step(custom_form["id"], 1, {})
+        except ValidationError as exc:  # an empty step usually misses required answers
+            assert isinstance(exc.detail, dict)
+
+
 class TestLeads:
     def test_list_page(self, client):
         page = client.leads.list_page(page_size=5)
@@ -384,6 +423,9 @@ class TestCmsSettings:
         assert isinstance(settings, dict)
         assert "parent_label" in settings
         assert "event_booking" in settings
+
+    def test_custom_scripts_is_text(self, client):
+        assert isinstance(client.cms_settings.custom_scripts(), str)
 
 
 # ── Metafields ─────────────────────────────────────────────

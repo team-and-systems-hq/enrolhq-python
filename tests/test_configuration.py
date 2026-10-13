@@ -65,6 +65,10 @@ class _Http:
         self.requests.append(("PUT", url, json))
         return self._next()
 
+    def patch(self, url, json=None, **kwargs):
+        self.requests.append(("PATCH", url, json))
+        return self._next()
+
     def delete(self, url, **kwargs):
         self.requests.append(("DELETE", url, kwargs.get("params")))
         return self._next()
@@ -690,3 +694,131 @@ def test_metafields_mutate_ordering():
     MetafieldsResource(http, BASE).mutate_ordering("parent", ["how_hear", "email"])
     assert http.writes()[0] == ("POST", BASE + "metafields/mutate_ordering/",
                                 {"block_name": "parent", "ordering": ["how_hear", "email"]})
+
+
+# ── Custom form building ────────────────────────────────────
+
+def _form():
+    return {
+        "id": "f1", "kind": "CUSTOM", "title": "Enrolment Agreement",
+        "form_slug": "enrolment-agreement", "is_active": False,
+        "allowed_application_statuses": [12],
+        "schema": {
+            "schema_data": [{"title": "Old", "name": "old", "elements": []}],
+            "local_fields_settings": {"parent": {"title": {"enabled": False, "mandatory": False}}},
+            "is_published": True,
+        },
+    }
+
+
+_STEPS = [{"title": "Details", "name": "details", "elements": [
+    {"element_type": "INPUT", "name": "date_of_entry", "is_enabled": True,
+     "css_class": "", "css_style": "", "is_required": True,
+     "label": "Date of entry", "description": ""},
+]}]
+
+
+def test_forms_save_schema_saves_a_draft_and_keeps_the_rest():
+    from enrolhq.resources.forms import FormsResource
+    http = _Http(_form(), {"id": "f1"})
+    FormsResource(http, BASE).save_schema("f1", _STEPS)
+    assert http.requests[0] == ("GET", BASE + "forms/staff/f1/", None)
+    method, url, body = http.writes()[0]
+    assert (method, url) == ("PUT", BASE + "forms/staff/f1/")
+    assert body["schema"] == {
+        "schema_data": _STEPS,
+        "local_fields_settings": {"parent": {"title": {"enabled": False, "mandatory": False}}},
+        "is_published": False,
+    }
+    assert body["title"] == "Enrolment Agreement"           # settings sent back unchanged
+    assert body["allowed_application_statuses"] == [12]
+
+
+def test_forms_save_schema_publish_with_settings_and_overrides():
+    from enrolhq.resources.forms import FormsResource
+    http = _Http(_form(), {"id": "f1"})
+    overrides = {"emergency_contact": {"email": {"enabled": True, "mandatory": False}}}
+    FormsResource(http, BASE).save_schema(
+        "f1", _STEPS, local_fields_settings=overrides, publish=True,
+        settings={"allowed_application_statuses": [10]},
+    )
+    body = http.writes()[0][2]
+    assert body["schema"]["is_published"] is True
+    assert body["schema"]["local_fields_settings"] == overrides   # replaced, not merged
+    assert body["allowed_application_statuses"] == [10]
+
+
+def test_forms_check_local_fields_reports_unknown_and_permanent():
+    from enrolhq.resources.forms import FormsResource
+    metafields = {"field_settings": {
+        "profile": {"_meta": {"permanent": ["first_name"]}, "first_name": {}, "middle_name": {}},
+    }}
+    forms = FormsResource(_Http(metafields), BASE)
+    problems = forms.check_local_fields({
+        "profile": {
+            "middle_name": {"enabled": True, "mandatory": False},
+            "first_name": {"enabled": False, "mandatory": False},
+            "nickname": {"enabled": True, "mandatory": False},
+        },
+        "pets": {"name": {"enabled": True, "mandatory": False}},
+    })
+    assert problems == [
+        "profile.first_name: permanent field, must stay enabled and mandatory",
+        "profile.nickname: no such field",
+        "pets: no such field settings block",
+    ]
+    ok = FormsResource(_Http(metafields), BASE).check_local_fields(
+        {"profile": {"middle_name": {"enabled": True, "mandatory": False}}})
+    assert ok == []
+
+
+def test_forms_preview_and_validate_step_urls():
+    from enrolhq.resources.forms import FormsResource
+    http = _Http({"schema": {}}, {"form_step": 6})
+    forms = FormsResource(http, BASE)
+    forms.preview("enrolment-agreement")
+    forms.validate_step("f1", 5, {"date_of_entry": "02/02/2027"})
+    assert http.requests == [
+        ("GET", BASE + "forms/previews/enrolment-agreement/", None),
+        ("POST", BASE + "forms/previews/submit/f1/preview/5/", {"date_of_entry": "02/02/2027"}),
+    ]
+
+
+# ── Custom Scripts ──────────────────────────────────────────
+
+_SNIPPET = "<style>\n/* Example form */\n.compact { margin-top: -2.25rem; }\n</style>"
+
+
+def test_append_custom_scripts_keeps_existing_html():
+    from enrolhq.resources.cms_settings import CmsSettingsResource
+    http = _Http({"page_head_html": "<style>h1 {}</style>\n"}, {})
+    added = CmsSettingsResource(http, BASE).append_custom_scripts(
+        _SNIPPET, marker="/* Example form */")
+    assert added is True
+    assert http.writes() == [("PATCH", BASE + "extra-frontend-code/",
+                              {"page_head_html": "<style>h1 {}</style>\n" + _SNIPPET})]
+
+
+def test_append_custom_scripts_only_once():
+    from enrolhq.resources.cms_settings import CmsSettingsResource
+    http = _Http({"page_head_html": "<style>h1 {}</style>\n" + _SNIPPET})
+    assert CmsSettingsResource(http, BASE).append_custom_scripts(
+        _SNIPPET, marker="/* Example form */") is False
+    assert http.writes() == []
+
+
+def test_append_custom_scripts_to_empty_and_marker_check():
+    from enrolhq.resources.cms_settings import CmsSettingsResource
+    http = _Http({"page_head_html": ""}, {})
+    CmsSettingsResource(http, BASE).append_custom_scripts(_SNIPPET, marker="Example form")
+    assert http.writes()[0][2] == {"page_head_html": _SNIPPET}
+    with pytest.raises(ValueError):
+        CmsSettingsResource(_Http(), BASE).append_custom_scripts(_SNIPPET, marker="absent")
+
+
+def test_patch_does_not_follow_redirects():
+    http = HttpClient(_StubAuth())
+    http.session = _StubSession(301, "https://x.enrolhq.net.au/api/v2/extra-frontend-code/")
+    with pytest.raises(EnrolHQError, match="x.enrolhq.net.au"):
+        http.patch("https://x.enrolhq.com.au/api/v2/extra-frontend-code/", json={})
+    assert http.session.kwargs["allow_redirects"] is False
