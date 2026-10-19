@@ -2,7 +2,7 @@
 
 from ._version import __version__
 from .client import EnrolHQClient
-from .constants import ApplicationStatus, DocumentKind, Gender
+from .constants import ActivityKind, ApplicationStatus, DocumentKind, Gender
 from .exceptions import (
     APIError,
     AuthenticationError,
@@ -24,6 +24,7 @@ from .resources.events import json_time, session
 __all__ = [
     "__version__",
     "EnrolHQClient",
+    "ActivityKind",
     "ApplicationStatus",
     "DocumentKind",
     "Gender",

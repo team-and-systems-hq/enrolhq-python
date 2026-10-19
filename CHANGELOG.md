@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `client.activity_log.delete(entry_id)` and the `ActivityKind` enum for Comms
+  Log entry types.
 - **School configuration resources** — everything set under *Settings* when
   onboarding a school:
   - `client.school` (`school/`): `get`, `update`, `update_fields`,
@@ -57,6 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `client.activity_log.create()` never worked: it sent a `text` field the
+  server doesn't have and left out the required `activity_kind` and
+  `occurred_at`. It is now `create(student_profile_id, activity_kind,
+  description="", *, occurred_at=None, attachment=None)`. `occurred_at`
+  defaults to now; a naive datetime or an unknown kind raises `ValueError`.
 - `events.preview()` called `staff-events/preview/`, which does not exist (404).
   It now calls `staff-events-preview/`.
 - Writes to a non-canonical host (e.g. `school.enrolhq.com.au` for a

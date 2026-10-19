@@ -37,6 +37,21 @@ class Gender(IntEnum):
     PREFER_NOT_TO_DISCLOSE = 4
 
 
+class ActivityKind(str, Enum):
+    """Comms Log entry types (``activity_kind`` on ``activity-log/``)."""
+
+    INTERNAL_NOTE = "INTERNAL_NOTE"
+    EMAIL = "EMAIL"
+    PHONE_CALL = "PHONE_CALL"
+    SMS = "SMS"
+    FACE_TO_FACE_MEETING = "FACE_TO_FACE_MEETING"
+    SCHOOL_EVENT = "SCHOOL_EVENT"
+    LETTER = "LETTER"
+    PRIVATE_TOUR = "PRIVATE_TOUR"  # "Ad hoc Private Tour" in the dashboard
+    ITEM_POSTED = "ITEM_POSTED"
+    OTHER = "OTHER"
+
+
 class DocumentKind(str, Enum):
     BIRTH_CERT = "BIRTH_CERT"
     SCHOOL_REPORT = "SCHOOL_REPORT"
