@@ -304,6 +304,7 @@ class _FakeHttp:
         self.calls = []  # list of (url, params)
         self.posts = []  # list of (url, json)
         self.puts = []  # list of (url, json)
+        self.deletes = []  # list of url
 
     def get(self, url, params=None, **kwargs):
         self.calls.append((url, params))
@@ -315,6 +316,10 @@ class _FakeHttp:
 
     def put(self, url, json=None, **kwargs):
         self.puts.append((url, json))
+        return _FakeResponse(self._payloads.pop(0))
+
+    def delete(self, url, params=None, **kwargs):
+        self.deletes.append(url)
         return _FakeResponse(self._payloads.pop(0))
 
 
@@ -439,6 +444,82 @@ def test_activity_log_list_page():
     assert params["page"] == 2
     assert params["page_size"] == 50
     assert page.count == 3
+
+
+def test_activity_log_create_payload():
+    from datetime import datetime, timedelta, timezone
+
+    from enrolhq import ActivityKind
+    from enrolhq.resources.activity_log import ActivityLogResource
+    http = _FakeHttp({"id": "e1"})
+    res = ActivityLogResource(http, BASE)
+    when = datetime(2023, 7, 4, 12, 44, tzinfo=timezone(timedelta(hours=12)))
+    out = res.create("sid", ActivityKind.PHONE_CALL, "Mum called", occurred_at=when)
+    assert out == {"id": "e1"}
+    url, body = http.posts[0]
+    assert url == BASE + "activity-log/"
+    assert body == {
+        "student_profile": "sid",
+        "activity_kind": "PHONE_CALL",
+        "description": "Mum called",
+        "occurred_at": "2023-07-04T12:44:00+12:00",
+    }
+    assert "text" not in body and "attachment" not in body
+
+
+def test_activity_log_create_accepts_strings():
+    from enrolhq.resources.activity_log import ActivityLogResource
+    http = _FakeHttp({"id": "e1"})
+    res = ActivityLogResource(http, BASE)
+    res.create("sid", "OTHER", occurred_at="2024-02-15T13:32:00+13:00",
+               attachment="data:application/pdf;filename:a.pdf;base64,AA==")
+    _, body = http.posts[0]
+    assert body["activity_kind"] == "OTHER"
+    assert body["description"] == ""
+    assert body["occurred_at"] == "2024-02-15T13:32:00+13:00"
+    assert body["attachment"].startswith("data:application/pdf;filename:a.pdf")
+
+
+def test_activity_log_create_defaults_occurred_at_to_now_utc():
+    from datetime import datetime, timezone
+
+    from enrolhq.resources.activity_log import ActivityLogResource
+    http = _FakeHttp({"id": "e1"})
+    before = datetime.now(timezone.utc)
+    ActivityLogResource(http, BASE).create("sid", "INTERNAL_NOTE", "x")
+    sent = datetime.fromisoformat(http.posts[0][1]["occurred_at"])
+    assert sent.utcoffset() is not None
+    assert before <= sent <= datetime.now(timezone.utc)
+
+
+def test_activity_log_create_rejects_naive_datetime_and_unknown_kind():
+    from datetime import datetime
+
+    from enrolhq.resources.activity_log import ActivityLogResource
+    http = _FakeHttp()
+    res = ActivityLogResource(http, BASE)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        res.create("sid", "EMAIL", occurred_at=datetime(2024, 1, 1, 9, 0))
+    # the old create(student_profile_id, text) call shape fails loudly
+    with pytest.raises(ValueError, match="not one of"):
+        res.create("sid", "Called mum about the start date")
+    assert http.posts == []
+
+
+def test_activity_log_delete():
+    from enrolhq.resources.activity_log import ActivityLogResource
+    http = _FakeHttp(None)
+    assert ActivityLogResource(http, BASE).delete("e1") is None
+    assert http.deletes == [BASE + "activity-log/e1/"]
+
+
+def test_activity_kind_values_match_server():
+    from enrolhq import ActivityKind
+    assert {k.value for k in ActivityKind} == {
+        "INTERNAL_NOTE", "EMAIL", "PHONE_CALL", "SMS", "FACE_TO_FACE_MEETING",
+        "SCHOOL_EVENT", "LETTER", "PRIVATE_TOUR", "ITEM_POSTED", "OTHER",
+    }
+    assert ActivityKind.EMAIL == "EMAIL"
 
 
 # ── CmsSettingsResource ─────────────────────────────────────

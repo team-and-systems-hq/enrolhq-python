@@ -107,7 +107,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Forms | `client.forms` | list, get, find, definition, save_schema, update_definition, check_local_fields, preview, validate_step, submits, get_submit, answers, consents, iter_answers, export_submits |
 | Documents | `client.documents` | list, upload, download, delete |
 | Notes | `client.notes` | list, create |
-| Activity Log | `client.activity_log` | list, create |
+| Activity Log (Comms Log) | `client.activity_log` | list, create, delete |
 | Audit Log | `client.audit_log` | list (by student_profile or parent) |
 | Email Log | `client.email_log` | list |
 | Events | `client.events` | list, get, create, update, delete |
@@ -124,6 +124,36 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Event settings | `client.event_settings` | get, update, update_fields, kind_options, ensure_kinds |
 | Entry grade settings | `client.entry_grade_settings` | get, update, modify_grades |
 | Payment settings | `client.payment_settings` | get, update, update_fields |
+
+## Comms Log entries and notes
+
+The Comms Log on a student profile is `client.activity_log`. Each entry has an
+`activity_kind`, a `description` and an `occurred_at` time:
+
+```python
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from enrolhq import ActivityKind
+
+entry = client.activity_log.create(
+    "student-uuid",
+    ActivityKind.PHONE_CALL,
+    "Mum called to confirm the Term 1 start date.",
+    occurred_at=datetime(2026, 3, 2, 14, 15, tzinfo=ZoneInfo("Australia/Sydney")),
+)
+client.activity_log.delete(entry["id"])  # undo
+```
+
+`occurred_at` defaults to now. A naive datetime is rejected so that imported
+history keeps its real time; pass an aware datetime or an ISO 8601 string with
+an offset. Kinds: `INTERNAL_NOTE`, `EMAIL`, `PHONE_CALL`, `SMS`,
+`FACE_TO_FACE_MEETING`, `SCHOOL_EVENT`, `LETTER`, `PRIVATE_TOUR`,
+`ITEM_POSTED`, `OTHER`. To attach a file, pass `attachment=file_data_uri(path)`.
+
+Notes (the Notes tab) are separate: `client.notes.create("student-uuid", "text")`.
+Neither sends anything to families. Entries and notes are created as the staff
+user the API token belongs to.
 
 ## Emergency contacts, medical data and consents
 
