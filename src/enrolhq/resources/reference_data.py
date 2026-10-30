@@ -70,7 +70,11 @@ class ReferenceDataResource(BaseResource):
         return self._get_all("medical-condition-options/")
 
     def parent_relationships(self) -> List[Dict[str, Any]]:
-        """List parent relationship types."""
+        """List how the parents relate to each other (Parents Married, etc.).
+
+        Not a parent's relationship to the student: those codes (0 Mother,
+        1 Father, ...) come from ``client.applications.field_choices()``.
+        """
         return self._get_all("parents-relationships/")
 
     def profile_categories(self) -> List[Dict[str, Any]]:

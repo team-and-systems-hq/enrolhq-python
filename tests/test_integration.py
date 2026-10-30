@@ -125,6 +125,14 @@ class TestApplicationNestedData:
             assert "first_name" in contact
             assert "relationship_to_student" in contact
 
+    def test_field_choices_decodes_parent_relationship(self, client):
+        choices = client.applications.field_choices()
+        relationships = choices["user_parent.relationship_to_student"]
+        assert relationships[0] == "Mother"
+        assert relationships[1] == "Father"
+        assert choices["non_user_parent.relationship_to_student"] == relationships
+        assert "emergency_contacts.relationship_to_student" in choices
+
     def test_medical_data_accessor(self, client):
         assert isinstance(
             client.applications.medical_data(self._first_application_id(client)),

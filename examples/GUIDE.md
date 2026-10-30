@@ -638,6 +638,41 @@ client.metafields.update_field("parent", "how_hear", {"options": ["Website", "Ot
 
 ---
 
+## 21 - Field Choices
+
+**File:** [`21_field_choices.py`](21_field_choices.py)
+
+Turns coded fields into labels. A parent's `relationship_to_student` is `0`
+for Mother and `1` for Father; `student_resides_with`, residency status, entry
+grade and the review approvals are coded the same way. The codes aren't in the
+settings API or metafields. They're in the applications endpoint's `OPTIONS`
+metadata, which `field_choices()` reads in one request.
+
+```python
+choices = client.applications.field_choices()
+choices["user_parent.relationship_to_student"]
+# {0: 'Mother', 1: 'Father', 2: 'Legal Guardian (court-appointed)', 4: 'Stepmother', ...}
+
+app = client.applications.get(application_id)
+code = app["user_parent"]["relationship_to_student"]
+choices["user_parent.relationship_to_student"].get(code)   # 'Mother'
+```
+
+- Keys are field paths. Nested fields are joined with dots and list items
+  drop their index, e.g. `emergency_contacts.relationship_to_student`.
+- Coded values can be `None` when the family hasn't answered, so look labels
+  up with `.get()`.
+- `client.reference_data.parent_relationships()` is a different list: how the
+  parents relate to each other (Parents Married, Single Parent, ...).
+- Emergency contact relationships are already text, from a list each school
+  sets up. Guardian relationships are free text.
+
+To get the same list without the SDK, send `OPTIONS` to `applications/`; the
+README's [Decoding coded fields](../README.md#decoding-coded-fields) section
+has the curl commands.
+
+---
+
 ## Error Handling
 
 All examples will raise clear exceptions on failure:
