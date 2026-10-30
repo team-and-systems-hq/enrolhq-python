@@ -101,6 +101,11 @@ class BaseResource:
         resp = self._http.get(self._url(endpoint))
         return resp.json()
 
+    def _options(self, endpoint: str) -> Dict[str, Any]:
+        """Return the endpoint's OPTIONS metadata (field types and choices)."""
+        resp = self._http.request("OPTIONS", self._url(endpoint))
+        return resp.json()
+
     def _post(
         self,
         endpoint: str,

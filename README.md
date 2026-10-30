@@ -102,7 +102,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 
 | Resource | Access | Operations |
 |----------|--------|------------|
-| Applications | `client.applications` | list, get, create, update, count, actions, bulk ops |
+| Applications | `client.applications` | list, get, create, update, count, field_choices, actions, bulk ops |
 | Leads | `client.leads` | list, get, create, update, references, create_reference |
 | Forms | `client.forms` | list, get, find, definition, save_schema, update_definition, check_local_fields, preview, validate_step, submits, get_submit, answers, consents, iter_answers, export_submits |
 | Documents | `client.documents` | list, upload, download, delete |
@@ -203,6 +203,84 @@ for record in client.forms.iter_answers(form=form["id"], is_completed=True):
 ```
 
 See [`examples/16_emergency_contacts_and_consents.py`](examples/16_emergency_contacts_and_consents.py).
+
+## Decoding coded fields
+
+Some fields come back as numbers, not text. A parent's
+`relationship_to_student` is `0` for Mother and `1` for Father, and
+`student_resides_with` is `0` for "Both Parents Together". Neither the settings
+API (`school/`) nor metafields lists these codes. The applications endpoint
+does, in its `OPTIONS` metadata, and `field_choices()` reads it for you:
+
+```python
+choices = client.applications.field_choices()
+relationships = choices["user_parent.relationship_to_student"]
+
+app = client.applications.get(application_id)
+for key in ("user_parent", "non_user_parent"):
+    parent = app.get(key) or {}
+    code = parent.get("relationship_to_student")       # e.g. 0, or None if unanswered
+    print(parent.get("first_name"), relationships.get(code))   # "Mother"
+```
+
+Keys are field paths: nested fields are joined with dots and list items drop
+their index (`emergency_contacts.relationship_to_student`). Each value maps a
+code to its label. It covers about 35 fields, including
+`student_resides_with`, `residency_details.residency_status`, `entry_grade`,
+`aboriginal_statuses` and the `enrolment_review` / `gpa_review` approvals.
+
+The parent relationship codes (`user_parent` and `non_user_parent`) are:
+
+| Code | Relationship | Code | Relationship |
+|------|--------------|------|--------------|
+| 0 | Mother | 10 | Agent |
+| 1 | Father | 11 | Cousin |
+| 2 | Legal Guardian (court-appointed) | 12 | Adult sister |
+| 4 | Stepmother | 13 | Adult brother |
+| 5 | Stepfather | 14 | Carer (nominated by parent) |
+| 6 | Grandmother | 15 | Foster Carer |
+| 7 | Grandfather | 16 | Caseworker/Manager |
+| 8 | Aunt | 17 | Exchange Programme Host |
+| 9 | Uncle | | |
+
+There is no code 3. The value is `null` when the parent hasn't answered.
+Prefer `field_choices()` over hard-coding this table, so new codes are picked
+up.
+
+Things that look related but aren't:
+
+- **`parents_relationships`** (`client.reference_data.parent_relationships()`,
+  `school/` and the application's `parents_relationships` list of ids) is how
+  the parents relate to *each other*: Parents Married, Parents Divorced, Single
+  Parent and so on.
+- **Emergency contact** relationships are text, not codes ("Aunt", "Family
+  Friend"). Each school sets its own list, which is also in metafields under
+  `emergency_contact.relationship_to_student.options`. "Other" fills in
+  `relationship_to_student_other`.
+- **Guardian** relationships are free text.
+
+Without the SDK, trade the API token for an access token, then send an
+`OPTIONS` request (not a `GET`) to `applications/`:
+
+```bash
+BASE="https://yourschool.enrolhq.com.au/api/v2"
+
+ACCESS=$(curl -s -X POST "$BASE/accounts/refresh/" \
+  -H "Authorization: Token $ENROLHQ_API_TOKEN" | jq -r .access_token)
+
+curl -s -X OPTIONS "$BASE/applications/" \
+  -H "Authorization: Token $ACCESS" \
+  -H "Accept: application/json" \
+  | jq '.actions.POST.user_parent.children.relationship_to_student.choices'
+# [{"value": 0, "display_name": "Mother"}, {"value": 1, "display_name": "Father"}, ...]
+```
+
+The response describes the fields `POST applications/` accepts. Nested objects
+list their fields under `children`, and lists describe their items under
+`child` (for example
+`.actions.POST.emergency_contacts.child.children.relationship_to_student.choices`).
+
+See [`examples/21_field_choices.py`](examples/21_field_choices.py).
 
 ## Configuring a school
 

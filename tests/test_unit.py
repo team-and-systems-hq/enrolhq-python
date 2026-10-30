@@ -305,6 +305,11 @@ class _FakeHttp:
         self.posts = []  # list of (url, json)
         self.puts = []  # list of (url, json)
         self.deletes = []  # list of url
+        self.requests = []  # list of (method, url)
+
+    def request(self, method, url, **kwargs):
+        self.requests.append((method, url))
+        return _FakeResponse(self._payloads.pop(0))
 
     def get(self, url, params=None, **kwargs):
         self.calls.append((url, params))
@@ -531,6 +536,69 @@ def test_cms_settings_get():
     res = CmsSettingsResource(http, BASE)
     assert res.get() == payload
     assert http.calls[0][0] == BASE + "cms-settings/"
+
+
+# ── ApplicationsResource.field_choices ──────────────────────
+
+def _choice(*pairs):
+    return {
+        "type": "choice",
+        "choices": [{"value": v, "display_name": d} for v, d in pairs],
+    }
+
+
+def test_field_choices_flattens_options_metadata():
+    from enrolhq.resources.applications import ApplicationsResource
+    options = {
+        "actions": {
+            "POST": {
+                "first_name": {"type": "string"},
+                "gender": _choice((1, "Male"), (2, "Female")),
+                "user_parent": {
+                    "type": "nested object",
+                    "children": {
+                        "relationship_to_student": _choice((0, "Mother"), (1, "Father")),
+                        "residency_details": {
+                            "type": "nested object",
+                            "children": {
+                                "residency_status": _choice((0, "Australian Citizen")),
+                            },
+                        },
+                    },
+                },
+                "emergency_contacts": {
+                    "type": "list",
+                    "child": {
+                        "type": "nested object",
+                        "children": {
+                            "relationship_to_student": _choice(("Aunt", "Aunt")),
+                        },
+                    },
+                },
+                "ethnic_origins": {
+                    "type": "list",
+                    "child": _choice(("African", "African")),
+                },
+            }
+        }
+    }
+    http = _FakeHttp(options)
+    choices = ApplicationsResource(http, BASE).field_choices()
+
+    assert http.requests == [("OPTIONS", BASE + "applications/")]
+    assert choices == {
+        "gender": {1: "Male", 2: "Female"},
+        "user_parent.relationship_to_student": {0: "Mother", 1: "Father"},
+        "user_parent.residency_details.residency_status": {0: "Australian Citizen"},
+        "emergency_contacts.relationship_to_student": {"Aunt": "Aunt"},
+        "ethnic_origins": {"African": "African"},
+    }
+
+
+def test_field_choices_without_post_action_is_empty():
+    from enrolhq.resources.applications import ApplicationsResource
+    res = ApplicationsResource(_FakeHttp({"name": "Applications"}), BASE)
+    assert res.field_choices() == {}
 
 
 # ── MetafieldsResource ──────────────────────────────────────

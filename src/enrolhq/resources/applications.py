@@ -69,6 +69,30 @@ class ApplicationsResource(BaseResource):
         """
         return self.get(application_id).get("guardians", [])
 
+    # ── Coded fields ────────────────────────────────────────────
+
+    def field_choices(self) -> Dict[str, Dict[Any, Any]]:
+        """Return the label for every coded value, keyed by field path.
+
+        Several fields come back as codes rather than text, e.g. a parent's
+        ``relationship_to_student`` is ``0`` for Mother and ``1`` for Father.
+        This reads the ``OPTIONS applications/`` metadata and maps each
+        choice field's path to ``{value: label}``. Nested fields use dots and
+        list items drop their index::
+
+            choices = client.applications.field_choices()
+            choices["user_parent.relationship_to_student"][0]   # "Mother"
+            choices["emergency_contacts.relationship_to_student"]
+
+        Lists a school configures (emergency contact relationships, ethnic
+        origins, document kinds) reflect that school's settings.
+        """
+        meta = self._options("applications/")
+        fields = meta.get("actions", {}).get("POST", {})
+        choices: Dict[str, Dict[Any, Any]] = {}
+        _collect_choices(fields, "", choices)
+        return choices
+
     # ── Create / Update ─────────────────────────────────────────
 
     def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -304,3 +328,18 @@ class ApplicationsResource(BaseResource):
         return self._post(
             "applications-list/delete-profiles/", params=filters
         )
+
+
+def _collect_choices(
+    fields: Dict[str, Any], prefix: str, out: Dict[str, Dict[Any, Any]]
+) -> None:
+    """Walk DRF OPTIONS field metadata, recording each field's choices."""
+    for name, spec in fields.items():
+        path = f"{prefix}{name}"
+        # A list field describes its items under "child".
+        while isinstance(spec.get("child"), dict):
+            spec = spec["child"]
+        if "choices" in spec:
+            out[path] = {c["value"]: c["display_name"] for c in spec["choices"]}
+        if isinstance(spec.get("children"), dict):
+            _collect_choices(spec["children"], f"{path}.", out)

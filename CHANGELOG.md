@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `client.applications.field_choices()`: the label for every coded field,
+  read from `OPTIONS applications/` (e.g. a parent's `relationship_to_student`
+  `0` → "Mother"). README section *Decoding coded fields* and
+  `examples/21_field_choices.py` cover it, including the raw HTTP call.
 - `client.activity_log.delete(entry_id)` and the `ActivityKind` enum for Comms
   Log entry types.
 - **School configuration resources** — everything set under *Settings* when
