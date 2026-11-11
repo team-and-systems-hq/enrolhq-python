@@ -452,11 +452,12 @@ Key concepts:
   `"is_lead_submitted_system_event_should_be_dispatched": True` to the payload
   when the lead should enter the school's follow-up sequence, as it would from
   a public lead form.
-- **Limited tokens:** a push-only token (role with *Add Leads only* and
+- **Limited tokens:** a token created by a non-superuser only works on the
+  leads endpoints. A push-only token (role with *Add Leads only* and
   *Create API Token*) can call `create()` and `references()` only.
-  `create_reference()` needs school-settings permission, so create the lead
-  reference in EnrolHQ first. See *Limited-permission API tokens* in the
-  README.
+  `create_reference()` writes school settings, which a limited token cannot
+  reach, so create the lead reference in EnrolHQ first. See
+  *Limited-permission API tokens* in the README.
 
 > **Migrating from the legacy v1 Zapier integration:** the old Zap POSTed to
 > `/api/v1/leads/` with `X-API-TOKEN` / `X-ENROLHQ-DOMAIN` headers.

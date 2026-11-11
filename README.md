@@ -37,8 +37,9 @@ ENROLHQ_API_TOKEN=your_api_token_here
 ```
 
 Get your API token from EnrolHQ: **Profile icon (top-right) > API Token**.
-The token carries the permissions of the staff user who creates it, so for an
-integration prefer a dedicated staff user with a limited role (see
+A superuser's token has full access. A token created by any other staff user
+only works with the leads endpoints, so an integration that just pushes leads
+should use a dedicated staff user with a limited role (see
 [Limited-permission API tokens](#limited-permission-api-tokens)).
 
 ```python
@@ -339,9 +340,10 @@ Things the settings endpoints have in common:
   `image_data_uri()` and `file_data_uri()` build them; PNG/JPEG/WebP only, so
   convert SVG, ICO and GIF first. A GET returns URLs, which the server rejects
   on write; the campus helpers only send the image slots you change.
-- **Permissions.** An API token has the permissions of the staff user who
-  created it. A superuser's token can write all of this. Otherwise the default
-  *Admin* role covers school, CMS, campus and metafields settings, and
+- **Permissions.** Writing this through an API token needs a superuser's
+  token: a token created by a non-superuser is only accepted by the leads
+  endpoints (see *Limited-permission API tokens*). With a regular login, the
+  default *Admin* role covers school, CMS, campus and metafields settings, and
   *Registrar* covers events, event settings, payments and email.
 
 See [`examples/18_school_branding.py`](examples/18_school_branding.py),
@@ -350,9 +352,14 @@ See [`examples/18_school_branding.py`](examples/18_school_branding.py),
 
 ## Limited-permission API tokens
 
-An API token inherits the permissions of the staff user who creates it. Any
-staff user whose role includes **Create API Token** can create one, so an
-integration does not need a superuser's token.
+Any staff user whose role includes **Create API Token** can create an API
+token, so an integration does not need a superuser's token.
+
+A token created by a non-superuser is *limited*: EnrolHQ only accepts it on the
+leads endpoints (`leads/` and `lead-references/`), and within those the user's
+role permissions apply. Every other endpoint answers 403
+(`This API token is not accepted by this endpoint.`), whatever the role. A
+superuser's token is not limited.
 
 To set up a token that can only push leads:
 
@@ -364,13 +371,19 @@ To set up a token that can only push leads:
    **Profile icon (top-right) > API Token**.
 
 That token can call `client.leads.create()` and `client.leads.references()`.
-`list()`, `get()`, `update()`, CSV export and bulk email return 403.
-`client.leads.create_reference()` also returns 403 because it writes school
-settings, so create the lead reference in EnrolHQ first.
+`list()`, `get()`, `update()`, CSV export and bulk email return 403 unless the
+role also grants *View Leads* / *Add/Edit/Delete Leads*.
+`client.leads.create_reference()` always returns 403 for a limited token
+because it writes school settings, so create the lead reference in EnrolHQ
+first.
 
-To revoke the token, deactivate the staff user: that invalidates every token
-the user holds. Use one staff user per integration. A token also expires if it
-is not used for 6 months.
+Revoking and expiry:
+
+- To revoke a token, deactivate the staff user: that invalidates every token
+  the user holds. Use one staff user per integration.
+- Changing the user's password does **not** revoke their tokens.
+- A limited token cannot create further tokens; a superuser's token can.
+- A token expires if it is not used for 6 months.
 
 ## Receiving sync signals (integration service)
 

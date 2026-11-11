@@ -32,7 +32,8 @@ class LeadsResource(BaseResource):
 
     Permissions follow the staff user the API token belongs to. A push-only
     token (*Add Leads only*) can call :meth:`create` and :meth:`references`;
-    everything else here returns 403.
+    everything else here returns 403. :meth:`create_reference` needs a
+    superuser's token.
     """
 
     # ── List / Get ──────────────────────────────────────────────

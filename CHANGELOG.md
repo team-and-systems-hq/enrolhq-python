@@ -9,10 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **Limited-permission API tokens.** A token carries the permissions of the
-  staff user who creates it, and any staff user with *Create API Token* can
-  create one (previously superusers only). README section
-  *Limited-permission API tokens* covers the push-only lead setup.
+- **Limited-permission API tokens.** Any staff user with *Create API Token*
+  can create a token (previously superusers only). A non-superuser's token is
+  only accepted by the leads endpoints, within the user's role permissions.
+  README section *Limited-permission API tokens* covers the push-only lead
+  setup, revoking and expiry.
 - Leads: document `is_lead_submitted_system_event_should_be_dispatched`. The
   guide wrongly said to drop it on v2; without it follow-up rules do not run.
   `examples/15_leads.py` now sets it.
