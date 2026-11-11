@@ -355,9 +355,10 @@ See [`examples/18_school_branding.py`](examples/18_school_branding.py),
 Any staff user whose role includes **Create API Token** can create an API
 token, so an integration does not need a superuser's token.
 
-A token created by a non-superuser is *limited*: EnrolHQ only accepts it on the
-leads endpoints (`leads/` and `lead-references/`), and within those the user's
-role permissions apply. Every other endpoint answers 403
+A token created by a non-superuser is *limited*: EnrolHQ only accepts it for
+creating, listing, getting and updating leads (`leads/`) and listing lead
+references (`lead-references/`), and within those the user's role permissions
+apply. Everything else answers 403
 (`This API token is not accepted by this endpoint.`), whatever the role. A
 superuser's token is not limited.
 
@@ -371,8 +372,9 @@ To set up a token that can only push leads:
    **Profile icon (top-right) > API Token**.
 
 That token can call `client.leads.create()` and `client.leads.references()`.
-`list()`, `get()`, `update()`, CSV export and bulk email return 403 unless the
-role also grants *View Leads* / *Add/Edit/Delete Leads*.
+`list()`, `get()` and `update()` return 403 unless the role also grants
+*View Leads* / *Add/Edit/Delete Leads*. Deleting leads, CSV export, bulk email
+and creating a profile from a lead are never available to a limited token.
 `client.leads.create_reference()` always returns 403 for a limited token
 because it writes school settings, so create the lead reference in EnrolHQ
 first.
