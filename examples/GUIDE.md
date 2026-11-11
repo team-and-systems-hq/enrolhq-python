@@ -447,15 +447,26 @@ Key concepts:
   and returns the new record with its server-assigned `id`. It raises
   `ValueError` if the slug already exists.
 - `update()` is a PUT, not a PATCH — send the complete lead object.
+- **Triggering follow-ups:** `create()` does not dispatch the *Lead Submitted*
+  system event by default, so follow-up rules do not run. Add
+  `"is_lead_submitted_system_event_should_be_dispatched": True` to the payload
+  when the lead should enter the school's follow-up sequence, as it would from
+  a public lead form.
+- **Limited tokens:** a token created by a non-superuser only works on the
+  leads endpoints. A push-only token (role with *Add Leads only* and
+  *Create API Token*) can call `create()` and `references()` only.
+  `create_reference()` writes school settings, which a limited token cannot
+  reach, so create the lead reference in EnrolHQ first. See
+  *Limited-permission API tokens* in the README.
 
 > **Migrating from the legacy v1 Zapier integration:** the old Zap POSTed to
 > `/api/v1/leads/` with `X-API-TOKEN` / `X-ENROLHQ-DOMAIN` headers.
 > `client.leads.create()` replaces it — authentication is handled by the SDK
 > (token refresh against v2), and the payload fields map 1:1
 > (`email`, `title`, `first_name`, `last_name`, `mobile_phone`, `reference`,
-> `student`, `residential_address`). The v1-only flag
-> `is_lead_submitted_system_event_should_be_dispatched` is not part of the
-> v2 payload — drop it.
+> `student`, `residential_address`). Keep
+> `is_lead_submitted_system_event_should_be_dispatched` if the Zap sent it:
+> v2 accepts the same flag, and without it follow-up rules do not run.
 
 > **Warning:** `create()` / `update()` write real data to your instance.
 
