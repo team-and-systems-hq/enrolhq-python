@@ -26,6 +26,13 @@ class LeadsResource(BaseResource):
     - ``student_profile`` — a student profile UUID. Set this to link the lead
       to an existing application/profile; leave ``None`` for a standalone lead.
     - ``how_hear`` / ``how_hear_other`` — marketing attribution.
+    - ``is_lead_submitted_system_event_should_be_dispatched`` — write-only
+      boolean. Set to ``True`` to dispatch the *Lead Submitted* system event so
+      follow-up rules run; by default the lead is created silently.
+
+    Permissions follow the staff user the API token belongs to. A push-only
+    token (*Add Leads only*) can call :meth:`create` and :meth:`references`;
+    everything else here returns 403.
     """
 
     # ── List / Get ──────────────────────────────────────────────

@@ -37,6 +37,9 @@ ENROLHQ_API_TOKEN=your_api_token_here
 ```
 
 Get your API token from EnrolHQ: **Profile icon (top-right) > API Token**.
+The token carries the permissions of the staff user who creates it, so for an
+integration prefer a dedicated staff user with a limited role (see
+[Limited-permission API tokens](#limited-permission-api-tokens)).
 
 ```python
 from enrolhq import EnrolHQClient, ApplicationStatus
@@ -336,14 +339,38 @@ Things the settings endpoints have in common:
   `image_data_uri()` and `file_data_uri()` build them; PNG/JPEG/WebP only, so
   convert SVG, ICO and GIF first. A GET returns URLs, which the server rejects
   on write; the campus helpers only send the image slots you change.
-- **Permissions.** A permanent API token belongs to a superuser and can write
-  all of this. With a regular login, the default *Admin* role covers school,
-  CMS, campus and metafields settings, and *Registrar* covers events, event
-  settings, payments and email.
+- **Permissions.** An API token has the permissions of the staff user who
+  created it. A superuser's token can write all of this. Otherwise the default
+  *Admin* role covers school, CMS, campus and metafields settings, and
+  *Registrar* covers events, event settings, payments and email.
 
 See [`examples/18_school_branding.py`](examples/18_school_branding.py),
 [`19_tours_and_events.py`](examples/19_tours_and_events.py) and
 [`20_region_and_year_levels.py`](examples/20_region_and_year_levels.py).
+
+## Limited-permission API tokens
+
+An API token inherits the permissions of the staff user who creates it. Any
+staff user whose role includes **Create API Token** can create one, so an
+integration does not need a superuser's token.
+
+To set up a token that can only push leads:
+
+1. In **Roles and Permissions**, create a role (e.g. "Lead integration") with
+   **Add Leads only (for API integrations)** (under *Leads*) and
+   **Create API Token** (under *Integrations*).
+2. Create a dedicated staff user for the integration with only that role.
+3. Sign in as that user and create the token under
+   **Profile icon (top-right) > API Token**.
+
+That token can call `client.leads.create()` and `client.leads.references()`.
+`list()`, `get()`, `update()`, CSV export and bulk email return 403.
+`client.leads.create_reference()` also returns 403 because it writes school
+settings, so create the lead reference in EnrolHQ first.
+
+To revoke the token, deactivate the staff user: that invalidates every token
+the user holds. Use one staff user per integration. A token also expires if it
+is not used for 6 months.
 
 ## Receiving sync signals (integration service)
 

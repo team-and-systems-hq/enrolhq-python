@@ -24,6 +24,9 @@ for ref in references:
 # round-trips the school/ settings object and returns the new record with
 # its server-assigned id. Creating an existing slug raises ValueError, so
 # reuse the reference if this example has run before.
+# This needs school-settings permission: with a push-only token, create the
+# reference in EnrolHQ instead. Listing and getting leads below also need
+# "View Leads"; a push-only token can only run the "Create a lead" section.
 REF_SLUG = "sdk-example-reference"
 existing = [r for r in references if r["slug"] == REF_SLUG]
 reference = existing[0] if existing else client.leads.create_reference(
@@ -82,6 +85,9 @@ new_lead = client.leads.create({
     # Set this to a student profile UUID to link the lead to an existing
     # application; None creates a standalone lead.
     "student_profile": None,
+    # Dispatch the "Lead Submitted" system event so follow-up rules run, as
+    # they would for a public lead form. Omit it to create the lead silently.
+    "is_lead_submitted_system_event_should_be_dispatched": True,
 })
 print(f"Created lead: {new_lead['id']}")
 
