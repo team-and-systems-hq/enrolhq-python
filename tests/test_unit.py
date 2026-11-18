@@ -43,6 +43,13 @@ def test_application_status_values():
     assert int(ApplicationStatus.TRASHED) == 7
     assert int(ApplicationStatus.REGISTER_INTEREST) == -1
     assert int(ApplicationStatus.CUSTOM_8) == 22
+    assert int(ApplicationStatus.CUSTOM_16) == 30
+
+
+def test_application_status_covers_every_server_status():
+    # The server defines -1..30. A status outside the enum would make
+    # ApplicationStatus(record["application_status"]) raise.
+    assert sorted(int(s) for s in ApplicationStatus) == list(range(-1, 31))
 
 
 def test_application_status_works_as_int():
@@ -171,7 +178,7 @@ def test_client_has_all_resources():
         "applications", "leads", "documents", "notes", "activity_log",
         "email_log", "events", "event_bookings", "payments", "staff",
         "analytics", "reference_data", "audit_log", "cms_settings",
-        "metafields",
+        "metafields", "admission_processes",
     ]:
         assert hasattr(c, attr), f"Missing resource: {attr}"
 
@@ -297,11 +304,17 @@ class _FakeResponse:
 
 
 class _FakeHttp:
-    """Records calls and returns queued JSON payloads in order."""
+    """Records calls and returns queued JSON payloads in order.
+
+    A queued exception is raised instead of returned.
+    """
+
+    timeout = (10, 30)  # as HttpClient.timeout
 
     def __init__(self, *payloads):
         self._payloads = list(payloads)
         self.calls = []  # list of (url, params)
+        self.get_kwargs = []  # extra keyword arguments of each get()
         self.posts = []  # list of (url, json)
         self.puts = []  # list of (url, json)
         self.deletes = []  # list of url
@@ -313,7 +326,11 @@ class _FakeHttp:
 
     def get(self, url, params=None, **kwargs):
         self.calls.append((url, params))
-        return _FakeResponse(self._payloads.pop(0))
+        self.get_kwargs.append(kwargs)
+        payload = self._payloads.pop(0)
+        if isinstance(payload, Exception):
+            raise payload
+        return _FakeResponse(payload)
 
     def post(self, url, json=None, params=None, **kwargs):
         self.posts.append((url, json))
@@ -1007,3 +1024,344 @@ def test_submits_passes_filters_through():
     assert params["form"] == "form-a"
     assert params["entry_year"] == 2027
     assert params["is_completed"] is True
+
+
+# ── Admission processes ─────────────────────────────────────
+
+V3 = "https://x.enrolhq.com.au/api/v3alpha/"
+
+
+def _process(**overrides):
+    process = {
+        "id": "proc-1",
+        "title": "School Application",
+        "is_enabled": True,
+        "is_new_entry_details_required": False,
+        "campus": None,
+        "forms": [
+            {
+                "id": "row-1",
+                "custom_form": "form-a",
+                "opening_application_status": 2,
+                "is_application_submission_form": True,
+                "has_incomplete_student_applications": False,
+            }
+        ],
+    }
+    process.update(overrides)
+    return process
+
+
+def _student_application(**overrides):
+    application = {
+        "id": "sa-1",
+        "admission_process": "proc-1",
+        "is_primary": True,
+        "application_status": 2,
+        "form_submits": [],
+    }
+    application.update(overrides)
+    return application
+
+
+def test_admission_processes_list_and_page():
+    from enrolhq.resources.admission_processes import AdmissionProcessesResource
+    listing = {"count": 1, "next": None, "results": [_process()]}
+    http = _FakeHttp(listing, listing)
+    res = AdmissionProcessesResource(http, BASE)
+
+    assert [p["id"] for p in res.list()] == ["proc-1"]
+    page = res.list_page(page=2, page_size=10)
+    assert page.count == 1
+
+    assert http.calls[0] == (BASE + "admission-processes/", {"page_size": 100, "page": 1})
+    assert http.calls[1] == (BASE + "admission-processes/", {"page": 2, "page_size": 10})
+
+
+def test_admission_processes_get():
+    from enrolhq.resources.admission_processes import AdmissionProcessesResource
+    http = _FakeHttp(_process())
+    res = AdmissionProcessesResource(http, BASE)
+
+    assert res.get("proc-1")["title"] == "School Application"
+    assert http.calls[0][0] == BASE + "admission-processes/proc-1/"
+
+
+def test_admission_processes_and_student_applications_are_read_only():
+    from enrolhq.resources.admission_processes import AdmissionProcessesResource
+    from enrolhq.resources.applications import ApplicationsResource
+    for name in ("create", "update", "update_fields", "delete"):
+        assert not hasattr(AdmissionProcessesResource, name), name
+    assert not hasattr(ApplicationsResource, "set_primary_student_application")
+
+
+def test_url_for_version_swaps_the_trailing_version():
+    from enrolhq.resources.base import BaseResource
+    for base in (
+        "https://x.enrolhq.com.au/api/v1/",
+        "https://x.enrolhq.com.au/api/v2/",
+        "https://x.enrolhq.com.au/api/v3alpha/",
+    ):
+        res = BaseResource(None, base)
+        assert res._url_for_version("v3alpha", "applications/") == V3 + "applications/"
+    # No recognisable version: leave the URL alone rather than guess.
+    res = BaseResource(None, "https://proxy.example.com/enrolhq/")
+    assert res._url_for_version("v3alpha", "a/") == "https://proxy.example.com/enrolhq/a/"
+
+
+def test_student_applications_reads_the_v3alpha_record():
+    from enrolhq.resources.applications import ApplicationsResource
+    apps = [_student_application(), _student_application(id="sa-2", is_primary=False)]
+    http = _FakeHttp({"id": "app-1", "applications": apps})
+    res = ApplicationsResource(http, BASE)
+
+    assert res.student_applications("app-1") == apps
+    # The client is on v2, where the record has no `applications`.
+    assert http.calls[0][0] == V3 + "applications/app-1/"
+
+
+def test_student_applications_empty_is_not_an_error():
+    from enrolhq.resources.applications import ApplicationsResource
+    res = ApplicationsResource(_FakeHttp({"id": "app-1", "applications": []}), BASE)
+    assert res.student_applications("app-1") == []
+
+
+def test_student_applications_raises_when_the_record_has_no_applications_key():
+    from enrolhq.resources.applications import ApplicationsResource
+    # e.g. a base URL the version swap cannot rewrite, so the v2 record came back.
+    res = ApplicationsResource(
+        _FakeHttp({"id": "app-1"}), "https://proxy.example.com/enrolhq/"
+    )
+    with pytest.raises(EnrolHQError, match="v3alpha"):
+        res.student_applications("app-1")
+
+
+def test_iter_student_applications_flattens_and_attaches_the_student():
+    from enrolhq.resources.applications import ApplicationsResource
+    ada = {
+        "id": "app-1", "sid": "S1", "external_id": "X1", "first_name": "Ada",
+        "middle_name": "", "last_name": "L", "preferred_name": "",
+        "dob": "2015-01-01",
+        "applications": [
+            _student_application(),
+            _student_application(id="sa-2", is_primary=False),
+        ],
+    }
+    none_yet = {"id": "app-2", "first_name": "Bo", "applications": []}
+    cy = {"id": "app-3", "first_name": "Cy", "applications": [_student_application(id="sa-3")]}
+    http = _FakeHttp(
+        {"count": 3, "next": "page-2", "results": [ada, none_yet]},
+        {"count": 3, "next": None, "results": [cy]},
+    )
+    res = ApplicationsResource(http, BASE)
+    rows = list(res.iter_student_applications())
+
+    assert [r["id"] for r in rows] == ["sa-1", "sa-2", "sa-3"]
+    assert [r["student_profile"]["id"] for r in rows] == ["app-1", "app-1", "app-3"]
+    # Identifying fields only: the rest of the student record is not copied.
+    assert rows[0]["student_profile"] == {
+        "id": "app-1", "sid": "S1", "external_id": "X1", "first_name": "Ada",
+        "middle_name": "", "last_name": "L", "preferred_name": "",
+    }
+    assert rows[2]["student_profile"]["sid"] is None
+    assert rows[0]["admission_process"] == "proc-1"
+    # The source records are left as the server sent them.
+    assert "student_profile" not in ada["applications"][0]
+
+    assert [url for url, _ in http.calls] == [V3 + "applications/"] * 2
+    assert http.calls[0][1] == {"page_size": 100, "page": 1}
+    assert http.calls[1][1] == {"page_size": 100, "page": 2}
+
+
+def test_iter_student_applications_filters_by_admission_process():
+    import uuid
+    from enrolhq.resources.applications import ApplicationsResource
+    school = "11111111-1111-1111-1111-111111111111"
+    scholarship = "22222222-2222-2222-2222-222222222222"
+    other = "33333333-3333-3333-3333-333333333333"
+    page = {"count": 2, "next": None, "results": [
+        {"id": "app-1", "applications": [
+            _student_application(id="sa-1", admission_process=school),
+            _student_application(id="sa-2", admission_process=scholarship),
+        ]},
+        {"id": "app-2", "applications": [
+            _student_application(id="sa-3", admission_process=other),
+        ]},
+    ]}
+
+    def ids(**kwargs):
+        http = _FakeHttp(page)
+        rows = ApplicationsResource(http, BASE).iter_student_applications(**kwargs)
+        found = [row["id"] for row in rows]
+        # Filtering happens here, not on the server: nothing extra is sent.
+        assert http.calls[0][1] == {"page_size": 100, "page": 1}
+        return found
+
+    assert ids() == ["sa-1", "sa-2", "sa-3"]
+    assert ids(admission_process=scholarship) == ["sa-2"]
+    assert ids(admission_process=[school, other]) == ["sa-1", "sa-3"]
+    assert ids(admission_process={uuid.UUID(scholarship)}) == ["sa-2"]
+    assert ids(admission_process=uuid.UUID(scholarship)) == ["sa-2"]
+    assert ids(admission_process="no-such-process") == []
+    # An empty selection is not "everything".
+    assert ids(admission_process=[]) == []
+
+
+def test_iter_student_applications_updated_after():
+    import datetime as dt
+    from enrolhq.resources.applications import ApplicationsResource
+    empty = {"count": 0, "next": None, "results": []}
+    http = _FakeHttp(empty, empty)
+    res = ApplicationsResource(http, BASE)
+
+    when = dt.datetime(2026, 11, 1, 9, 30, tzinfo=dt.timezone.utc)
+    assert list(res.iter_student_applications(updated_after=when)) == []
+    assert http.calls[0][1]["updated_after"] == "2026-11-01T09:30:00+00:00"
+
+    list(res.iter_student_applications(updated_after="2026-11-01T00:00:00+13:00", page_size=50))
+    assert http.calls[1][1] == {
+        "updated_after": "2026-11-01T00:00:00+13:00", "page_size": 50, "page": 1,
+    }
+
+    # A naive datetime would be read in the school's timezone, not the
+    # caller's. It is rejected by the call itself, before any iteration.
+    with pytest.raises(ValueError, match="timezone-aware"):
+        res.iter_student_applications(updated_after=dt.datetime(2026, 11, 1))
+    with pytest.raises(ValueError, match="page_size"):
+        res.iter_student_applications(page_size=0)
+    assert len(http.calls) == 2
+
+
+def test_iter_student_applications_raises_when_records_have_no_applications_key():
+    from enrolhq.resources.applications import ApplicationsResource
+    http = _FakeHttp({"count": 1, "next": None, "results": [{"id": "app-1"}]})
+    res = ApplicationsResource(http, "https://proxy.example.com/enrolhq/")
+    with pytest.raises(EnrolHQError, match="v3alpha"):
+        list(res.iter_student_applications())
+
+
+# ── Page retries (PaginatedIterator, used by the application sweep) ──
+
+@pytest.fixture
+def sleeps(monkeypatch):
+    """Record the waits between retries instead of sleeping."""
+    waits = []
+    monkeypatch.setattr("enrolhq.pagination.time.sleep", waits.append)
+    return waits
+
+
+def _page(*ids, more=False):
+    return {"count": 99, "next": "more" if more else None,
+            "results": [{"id": i} for i in ids]}
+
+
+TIMED_OUT = EnrolHQError("GET ... failed: Read timed out. (read timeout=30)")
+
+
+def test_paginated_iterator_does_not_retry_unless_asked(sleeps):
+    from enrolhq.pagination import PaginatedIterator
+    http = _FakeHttp(_page("a", more=True), TIMED_OUT, _page("b"))
+    it = PaginatedIterator(http, BASE + "things/")
+
+    assert next(it) == {"id": "a"}
+    with pytest.raises(EnrolHQError, match="timed out"):
+        next(it)
+    assert sleeps == []
+    # The failed page is asked for again, not skipped.
+    assert next(it) == {"id": "b"}
+    assert [params["page"] for _, params in http.calls] == [1, 2, 2]
+
+
+def test_paginated_iterator_retries_the_same_page(sleeps):
+    from enrolhq.pagination import PaginatedIterator
+    http = _FakeHttp(
+        _page("a", more=True),
+        TIMED_OUT,
+        APIError(502, detail="Bad Gateway"),
+        _page("b", more=True),
+        _page("c"),
+    )
+    it = PaginatedIterator(http, BASE + "things/", retries=3)
+
+    assert [item["id"] for item in it] == ["a", "b", "c"]
+    assert [params["page"] for _, params in http.calls] == [1, 2, 2, 2, 3]
+    assert sleeps == [5, 10]
+
+
+def test_paginated_iterator_gives_up_after_its_retries(sleeps):
+    from enrolhq.pagination import PaginatedIterator
+    http = _FakeHttp(TIMED_OUT, TIMED_OUT, TIMED_OUT, _page("a"))
+    it = PaginatedIterator(http, BASE + "things/", retries=2)
+
+    with pytest.raises(EnrolHQError, match="timed out"):
+        next(it)
+    assert len(http.calls) == 3  # the first try and two retries
+    assert sleeps == [5, 10]
+    assert next(it) == {"id": "a"}
+    assert http.calls[-1][1]["page"] == 1
+
+
+def test_paginated_iterator_does_not_retry_errors_that_will_not_change(sleeps):
+    from enrolhq.pagination import PaginatedIterator
+    for error in (ForbiddenError(403), NotFoundError(404), ValidationError(400),
+                  AuthenticationError(detail="bad token")):
+        http = _FakeHttp(error, _page("a"))
+        with pytest.raises(type(error)):
+            next(PaginatedIterator(http, BASE + "things/", retries=3))
+        assert len(http.calls) == 1
+    assert sleeps == []
+
+
+def test_paginated_iterator_waits_as_long_as_a_rate_limit_asks(sleeps):
+    from enrolhq.pagination import PaginatedIterator
+    http = _FakeHttp(
+        RateLimitError(retry_after="42"),
+        RateLimitError(),  # no Retry-After header: back off instead
+        _page("a"),
+    )
+    assert [i["id"] for i in PaginatedIterator(http, BASE + "things/", retries=3)] == ["a"]
+    assert sleeps == [42.0, 10]
+
+
+def test_paginated_iterator_rejects_negative_retries():
+    from enrolhq.pagination import PaginatedIterator
+    with pytest.raises(ValueError, match="retries"):
+        PaginatedIterator(None, "http://x", retries=-1)
+
+
+def test_paginated_iterator_passes_a_timeout_only_when_given():
+    from enrolhq.pagination import PaginatedIterator
+    http = _FakeHttp(_page("a"), _page("a"))
+    list(PaginatedIterator(http, BASE + "things/"))
+    list(PaginatedIterator(http, BASE + "things/", timeout=(10, 120)))
+    assert http.get_kwargs == [{}, {"timeout": (10, 120)}]
+
+
+def test_application_sweep_survives_a_failed_page(sleeps):
+    from enrolhq.resources.applications import ApplicationsResource
+    first = {"count": 2, "next": "more", "results": [
+        {"id": "app-1", "applications": [_student_application(id="sa-1")]}]}
+    second = {"count": 2, "next": None, "results": [
+        {"id": "app-2", "applications": [_student_application(id="sa-2")]}]}
+    http = _FakeHttp(first, TIMED_OUT, second)
+    rows = list(ApplicationsResource(http, BASE).iter_student_applications())
+
+    # Nothing lost and nothing repeated.
+    assert [row["id"] for row in rows] == ["sa-1", "sa-2"]
+    assert [params["page"] for _, params in http.calls] == [1, 2, 2]
+    assert sleeps == [5]
+
+
+def test_application_sweep_reads_with_a_longer_timeout():
+    from enrolhq.resources.applications import ApplicationsResource, _sweep_timeout
+    empty = {"count": 0, "next": None, "results": []}
+    http = _FakeHttp(empty)
+    list(ApplicationsResource(http, BASE).iter_student_applications())
+    # Client default is (10, 30): too tight for 100 full records a request.
+    assert http.get_kwargs == [{"timeout": (10, 120)}]
+
+    assert _sweep_timeout((10, 30)) == (10, 120)
+    assert _sweep_timeout(60) == (60, 120)
+    assert _sweep_timeout((5, 600)) == (5, 600)  # a longer limit is kept
+    assert _sweep_timeout((10, None)) == (10, None)  # as is no read limit
+    assert _sweep_timeout(None) is None

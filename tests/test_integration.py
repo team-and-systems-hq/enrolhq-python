@@ -11,6 +11,7 @@ tests will fail. The unit tests in ``test_unit.py`` need no credentials and run
 fully offline.
 """
 
+import datetime as dt
 import itertools
 
 import pytest
@@ -560,6 +561,152 @@ class TestSchoolConfiguration:
 
     def test_payment_settings(self, client):
         assert "currency" in client.payment_settings.get()
+
+
+# ── Admission processes ─────────────────────────────────────
+
+class TestAdmissionProcesses:
+    """Read-only. Skipped at schools without the admission processes feature."""
+
+    def _processes(self, client):
+        try:
+            processes = list(client.admission_processes.list())
+        except ForbiddenError:
+            pytest.skip("Admission processes are not enabled for this school")
+        if not processes:
+            pytest.skip("No admission processes configured")
+        return processes
+
+    def _student_with_applications(self, client):
+        self._processes(client)
+        row = next(client.applications.iter_student_applications(page_size=20), None)
+        if row is None:
+            pytest.skip("No student has an application")
+        return row["student_profile"]["id"]
+
+    def test_list_and_get(self, client):
+        processes = self._processes(client)
+        process = processes[0]
+        assert {
+            "id", "title", "is_enabled", "is_new_entry_details_required",
+            "campus", "forms",
+        } <= set(process)
+        for form in process["forms"]:
+            assert {
+                "id", "custom_form", "opening_application_status",
+                "is_application_submission_form",
+            } <= set(form)
+            # Every status a process can open in must be in the enum.
+            ApplicationStatus(form["opening_application_status"])
+        assert client.admission_processes.get(process["id"]) == process
+
+    def test_process_forms_are_listed_by_forms_resource(self, client):
+        processes = self._processes(client)
+        by_form = {
+            form["custom_form"]: process["id"]
+            for process in processes
+            for form in process["forms"]
+        }
+        listed = {
+            form["id"]: form.get("admission_process")
+            for form in client.forms.list(page_size=1000)
+        }
+        for form_id, process_id in by_form.items():
+            assert listed[form_id] == process_id
+
+    def test_v2_record_has_no_applications_key(self, client):
+        # Why student_applications() reads another API version. If this
+        # starts failing, v2 has gained the key and the swap can go.
+        if "/api/v2/" not in client.base_url:
+            pytest.skip("Client is not on the v2 API")
+        student_id = self._student_with_applications(client)
+        assert "applications" not in client.applications.get(student_id)
+
+    def test_student_applications(self, client):
+        process_ids = {p["id"] for p in self._processes(client)}
+        student_id = self._student_with_applications(client)
+        applications = client.applications.student_applications(student_id)
+        assert applications
+        assert sum(1 for a in applications if a["is_primary"]) <= 1
+        # One application per process.
+        assert len({a["admission_process"] for a in applications}) == len(applications)
+        for application in applications:
+            assert application["admission_process"] in process_ids
+            ApplicationStatus(application["application_status"])
+            for submit in application["form_submits"]:
+                assert {"id", "form", "submitted_at", "completed_at", "form_pdf"} <= set(submit)
+
+    def test_student_record_mirrors_the_primary_application(self, client):
+        student_id = self._student_with_applications(client)
+        primary = [
+            a for a in client.applications.student_applications(student_id)
+            if a["is_primary"]
+        ]
+        if not primary:
+            pytest.skip("This student has no primary application")
+        student = client.applications.get(student_id)
+        for field in (
+            "entry_grade", "entry_term", "entry_year", "campus",
+            "attendance_type", "commencement_date", "application_status",
+        ):
+            assert student[field] == primary[0][field], field
+
+    def test_iter_student_applications_rows(self, client):
+        self._processes(client)
+        rows = list(itertools.islice(
+            client.applications.iter_student_applications(page_size=20), 5
+        ))
+        for row in rows:
+            assert row["student_profile"]["id"]
+            assert "admission_process" in row
+            assert "is_primary" in row
+
+    def _recent_rows(self, client, **kwargs):
+        """Applications of students changed in the last 30 days.
+
+        Lazy, and read in small pages, so a test that takes a few rows only
+        costs a request or two.
+        """
+        self._processes(client)
+        since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)
+        return client.applications.iter_student_applications(
+            updated_after=since, page_size=20, **kwargs
+        )
+
+    def test_iter_student_applications_by_process(self, client):
+        rows = list(itertools.islice(self._recent_rows(client), 30))
+        if not rows:
+            pytest.skip("No student with an application changed recently")
+        process_id = rows[0]["admission_process"]
+        expected = [r["id"] for r in rows if r["admission_process"] == process_id]
+
+        filtered = list(itertools.islice(
+            self._recent_rows(client, admission_process=process_id), len(expected)
+        ))
+        assert {r["admission_process"] for r in filtered} == {process_id}
+        assert [r["id"] for r in filtered] == expected
+
+    def test_custom_form_application_answers_are_readable(self, client):
+        custom_forms = {
+            form["id"] for form in client.forms.list(page_size=1000)
+            if form["kind"] == "CUSTOM"
+        }
+        submit = next(
+            (
+                submit
+                for row in itertools.islice(self._recent_rows(client), 60)
+                for submit in row["form_submits"]
+                if submit["form"] in custom_forms and submit["completed_at"]
+            ),
+            None,
+        )
+        if submit is None:
+            pytest.skip("No completed custom-form application changed recently")
+        answers = client.forms.answers(submit["id"])
+        assert answers
+        assert all({"name", "label", "element_type", "value"} <= set(a) for a in answers)
+        # A completed application form has answers, not just blank slots.
+        assert any(a["value"] not in (None, "", [], {}) for a in answers)
 
 
 # ── Analytics ───────────────────────────────────────────────

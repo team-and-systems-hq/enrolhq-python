@@ -20,6 +20,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Admission processes** (several applications per student), read-only:
+  - `client.admission_processes` (`admission-processes/`): `list`,
+    `list_page` and `get`. Each process has a title, the forms that belong to
+    it, the status a new application opens in and which form submits it.
+    Schools without the feature answer with 403.
+  - `client.applications.student_applications(application_id)`: the student's
+    applications, one per process, each with its own status, entry details,
+    `is_primary`, `submitted_at`, `completed_at` and `form_submits`. The
+    student record (`get()`, `list()`) only shows the primary application's
+    status and entry details.
+  - `client.applications.iter_student_applications(admission_process=,
+    updated_after=)`: every application at the school in one sweep, each row
+    carrying the student's id and names. `admission_process` keeps one
+    process's rows (or several); `updated_after` is the only filter the
+    server applies. A sweep of a large school runs for many minutes, so each
+    request gets a 120-second read timeout and is repeated up to three times
+    if it times out or meets a 5xx or 429.
+  - The server only puts `applications` on the `v3alpha` student record; v2
+    has no such key. These two methods call `v3alpha` whatever version the
+    base URL names. Nothing else changes version.
+  - README section *Admission processes and multiple applications*,
+    `examples/22_admission_processes.py` (pulls one process's applications
+    and their form answers, and every submission of its forms, including
+    those attached to no application), offline unit tests and read-only
+    integration tests. `docs/custom-forms.md` notes what the server rejects when saving a
+    form that belongs to a process.
+- `PaginatedIterator(retries=, timeout=)`: opt-in. With `retries`, a page
+  that fails for a passing reason (timeout, dropped connection, 5xx, 429) is
+  asked for again, waiting 5, 10, 20, ... seconds or as long as a 429's
+  `Retry-After` says. Other errors (400, 401, 403, 404) are never retried.
+  The `list()` methods are unchanged: they do not retry.
+- `ApplicationStatus.CUSTOM_9` to `CUSTOM_16` (23-30). The server has 16
+  custom statuses; the enum stopped at 8, so `ApplicationStatus(23)` raised.
 - `client.applications.field_choices()`: the label for every coded field,
   read from `OPTIONS applications/` (e.g. a parent's `relationship_to_student`
   `0` → "Mother"). README section *Decoding coded fields* and
@@ -74,6 +107,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `PaginatedIterator` skipped a page after an error: the page number moved on
+  before the request, so calling `next()` again after a failure asked for the
+  following page. It now stays on the page that failed.
 - `client.activity_log.create()` never worked: it sent a `text` field the
   server doesn't have and left out the required `activity_kind` and
   `occurred_at`. It is now `create(student_profile_id, activity_kind,
