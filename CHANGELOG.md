@@ -33,10 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `client.applications.iter_student_applications(admission_process=,
     updated_after=)`: every application at the school in one sweep, each row
     carrying the student's id and names. `admission_process` keeps one
-    process's rows (or several); `updated_after` is the only filter the
+    process's rows (or several) and raises `ValueError` up front for
+    anything that is not a UUID; `updated_after` is the only filter the
     server applies. A sweep of a large school runs for many minutes, so each
     request gets a 120-second read timeout and is repeated up to three times
-    if it times out or meets a 5xx or 429.
+    if it times out or meets a 5xx or 429. If it still fails the error is
+    raised and `next()` asks for the same page again. Each student is
+    yielded once even when pages shift under the sweep.
   - The server only puts `applications` on the `v3alpha` student record; v2
     has no such key. These two methods call `v3alpha` whatever version the
     base URL names. Nothing else changes version.
@@ -49,7 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PaginatedIterator(retries=, timeout=)`: opt-in. With `retries`, a page
   that fails for a passing reason (timeout, dropped connection, 5xx, 429) is
   asked for again, waiting 5, 10, 20, ... seconds or as long as a 429's
-  `Retry-After` says. Other errors (400, 401, 403, 404) are never retried.
+  `Retry-After` says, five minutes at most: a 429 asking for longer is raised
+  at once. Other errors (400, 401, 403, 404) are never retried.
   The `list()` methods are unchanged: they do not retry.
 - `ApplicationStatus.CUSTOM_9` to `CUSTOM_16` (23-30). The server has 16
   custom statuses; the enum stopped at 8, so `ApplicationStatus(23)` raised.

@@ -728,9 +728,11 @@ for app in client.applications.iter_student_applications(
   EOI or enrolment form (`kind` `GPA` / `ENROLMENT`) has no readable
   submission: those answers are the student record itself.
 - `iter_student_applications()` reads full student records, 100 per request
-  at around 10 seconds each, and repeats a request that times out.
-  `updated_after` is the only filter the server applies; `admission_process`
-  narrows the rows on your side.
+  at around 10 seconds each, and repeats a request that times out. It is not
+  a snapshot: each student is yielded once, but one removed while it runs can
+  hide another until the next sweep.
+- `updated_after` is the only filter the server applies; `admission_process`
+  narrows the rows on your side and must be a process `id`.
 - Schools without the feature answer `client.admission_processes` with 403
   (`ForbiddenError`).
 

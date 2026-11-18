@@ -2,7 +2,9 @@
 
 import datetime as dt
 import uuid
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Union
+from collections import deque
+from collections.abc import Mapping
+from typing import Any, Deque, Dict, Iterable, Iterator, List, Optional, Set, Union
 
 from ..exceptions import EnrolHQError
 from ..pagination import PaginatedIterator, PaginatedResponse
@@ -153,7 +155,9 @@ class ApplicationsResource(BaseResource):
     def iter_student_applications(
         self,
         *,
-        admission_process: Optional[Union[str, uuid.UUID, Iterable[Any]]] = None,
+        admission_process: Optional[
+            Union[str, uuid.UUID, Iterable[Union[str, uuid.UUID]]]
+        ] = None,
         updated_after: Optional[Union[str, dt.datetime]] = None,
         page_size: int = 100,
     ) -> Iterator[Dict[str, Any]]:
@@ -177,25 +181,49 @@ class ApplicationsResource(BaseResource):
         This sweeps the full student records, 100 per request at most. Each
         request is large and takes around 10 seconds, so a school with 15,000
         students takes about 25 minutes. That is still far quicker than one
-        :meth:`student_applications` call per student. A request that times
-        out or meets a server error or rate limit is repeated up to three
-        times before the sweep gives up.
+        :meth:`student_applications` call per student.
+
+        The sweep is not a snapshot. Students come newest first, a page at a
+        time, so a student added while it runs pushes the rest along and the
+        same student turns up again on the next page; each student is yielded
+        once only. A student deleted or merged away while it runs pulls the
+        rest back, and one student is then missed until the next sweep.
+
+        A request that times out or meets a server error or rate limit is
+        repeated up to three times. If it still fails the error is raised,
+        but the sweep is not over: calling ``next()`` again asks for the same
+        page, so a caller can wait and carry on instead of starting again::
+
+            sweep = client.applications.iter_student_applications()
+            while True:
+                try:
+                    app = next(sweep)
+                except StopIteration:
+                    break
+                except EnrolHQError:
+                    time.sleep(300)     # then the same page is asked for again
+                    continue
+                ...
 
         Args:
             admission_process: Only applications in this process (an ``id``
                 from ``client.admission_processes``), or in any of several.
                 The server has no such filter, so every student is still
-                read; this only narrows what is yielded.
-            updated_after: Only students changed since this time (an aware
-                ``datetime`` or an ISO 8601 string with an offset). This is
-                the only filter the endpoint applies; others are ignored. It
-                follows the student record and its carers, form submissions,
-                payments, bookings and documents, not the applications
+                read; this only narrows what is yielded. Anything that is
+                not a UUID, and an empty collection, raises ``ValueError``
+                before the first request.
+            updated_after: Only students changed at or after this time (an
+                aware ``datetime`` or an ISO 8601 string with an offset).
+                This is the only filter the endpoint applies; others are
+                ignored. It follows the student record and its carers, form
+                submissions, payments, enquiries, event bookings, interviews
+                and their bookings, and documents, not the applications
                 themselves, so do a full sweep from time to time.
             page_size: Students per request (the server caps this at 100).
                 Smaller pages are not quicker: each request has a high fixed
                 cost, so the whole sweep takes longer.
         """
+        wanted = _admission_process_ids(admission_process)
         if isinstance(updated_after, dt.datetime):
             if updated_after.tzinfo is None:
                 raise ValueError("updated_after must be timezone-aware")
@@ -210,14 +238,7 @@ class ApplicationsResource(BaseResource):
             retries=SWEEP_RETRIES,
             timeout=_sweep_timeout(self._http.timeout),
         )
-        if admission_process is None:
-            wanted = None
-        elif isinstance(admission_process, (str, uuid.UUID)):
-            wanted = {str(admission_process)}
-        else:
-            wanted = {str(process_id) for process_id in admission_process}
-        # A separate generator, so bad arguments raise here, not on first use.
-        return _flatten_student_applications(students, url, wanted)
+        return _StudentApplicationSweep(students, url, wanted)
 
     # ── Coded fields ────────────────────────────────────────────
 
@@ -512,18 +533,86 @@ def _sweep_timeout(timeout: Any) -> Any:
     return (connect, read)
 
 
-def _flatten_student_applications(
-    students: Iterator[Dict[str, Any]], url: str, wanted: Optional[Set[str]]
-) -> Iterator[Dict[str, Any]]:
-    """Yield each student's applications, tagged with who they belong to.
+def _admission_process_ids(value: Any) -> Optional[Set[str]]:
+    """Return the process ids to keep, as the server writes them, or ``None``.
 
-    *wanted* is the set of admission process ids to keep, or ``None`` for all.
+    A filter that can never match would cost a whole sweep and yield nothing,
+    so anything that is not a UUID is rejected here, before the first request:
+    a process record passed where its ``id`` was meant, a title, an empty
+    collection. UUIDs are normalised, so ``"ABCD..."`` and a hyphen-less id
+    match the lower-case hyphenated form the server sends.
     """
-    for student in students:
-        summary = {key: student.get(key) for key in STUDENT_SUMMARY_FIELDS}
-        for application in _student_applications_of(student, url):
-            if wanted is None or application["admission_process"] in wanted:
-                yield {**application, "student_profile": summary}
+    if value is None:
+        return None
+    if isinstance(value, (str, uuid.UUID)):
+        values = [value]
+    elif isinstance(value, Mapping):
+        values = [value]  # rejected below, with the message about records
+    else:
+        try:
+            values = list(value)
+        except TypeError:
+            values = [value]
+        if not values:
+            raise ValueError(
+                "admission_process is empty, which would match no application; "
+                "pass None for every process"
+            )
+    ids = set()
+    for item in values:
+        if isinstance(item, Mapping):
+            raise ValueError(
+                "admission_process takes a process id, not the process record: "
+                'pass process["id"]'
+            )
+        try:
+            ids.add(str(uuid.UUID(str(item))))
+        except ValueError:
+            raise ValueError(
+                f"admission_process: {item!r} is not a process id (a UUID)"
+            ) from None
+    return ids
+
+
+class _StudentApplicationSweep:
+    """The iterator behind ``iter_student_applications()``.
+
+    A class, not a generator: a generator that raises is finished, so a
+    caller who caught a failed page and called ``next()`` again would see the
+    sweep end early, as if the school had been read. Here the failed page is
+    asked for again (``PaginatedIterator`` stays on it).
+    """
+
+    def __init__(
+        self, students: Iterator[Dict[str, Any]], url: str, wanted: Optional[Set[str]]
+    ) -> None:
+        self._students = students
+        self._url = url
+        #: Admission process ids to keep, or ``None`` for all.
+        self._wanted = wanted
+        #: Ids of the students already read. Pages shift when a student is
+        #: added mid-sweep, and the same student then comes back.
+        self._seen: Set[Any] = set()
+        self._rows: Deque[Dict[str, Any]] = deque()
+
+    def __iter__(self) -> "_StudentApplicationSweep":
+        return self
+
+    def __next__(self) -> Dict[str, Any]:
+        while not self._rows:
+            student = next(self._students)  # StopIteration ends the sweep
+            applications = _student_applications_of(student, self._url)
+            student_id = student.get("id")
+            if student_id is not None:
+                if student_id in self._seen:
+                    continue
+                self._seen.add(student_id)
+            summary = {key: student.get(key) for key in STUDENT_SUMMARY_FIELDS}
+            for application in applications:
+                if self._wanted is None or application["admission_process"] in self._wanted:
+                    # A copy each, so changing one row's student leaves the rest.
+                    self._rows.append({**application, "student_profile": dict(summary)})
+        return self._rows.popleft()
 
 
 def _collect_choices(

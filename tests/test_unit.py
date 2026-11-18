@@ -1202,9 +1202,34 @@ def test_iter_student_applications_filters_by_admission_process():
     assert ids(admission_process=[school, other]) == ["sa-1", "sa-3"]
     assert ids(admission_process={uuid.UUID(scholarship)}) == ["sa-2"]
     assert ids(admission_process=uuid.UUID(scholarship)) == ["sa-2"]
-    assert ids(admission_process="no-such-process") == []
-    # An empty selection is not "everything".
-    assert ids(admission_process=[]) == []
+    # Any spelling of the UUID matches the form the server sends.
+    assert ids(admission_process=scholarship.upper()) == ["sa-2"]
+    assert ids(admission_process=scholarship.replace("-", "")) == ["sa-2"]
+    assert ids(admission_process="{%s}" % scholarship) == ["sa-2"]
+    # A real UUID that is no process of this school: nothing, but no error.
+    assert ids(admission_process="44444444-4444-4444-4444-444444444444") == []
+
+
+def test_iter_student_applications_rejects_a_filter_that_cannot_match():
+    from enrolhq.resources.applications import ApplicationsResource
+    process = _process(id="22222222-2222-2222-2222-222222222222")
+    http = _FakeHttp()
+    res = ApplicationsResource(http, BASE)
+
+    # Each of these would read the whole school and yield nothing.
+    for bad, message in (
+        (process, "not the process record"),        # the record, not its id
+        ([process], "not the process record"),
+        ("Scholarship Application", "not a process id"),  # a title
+        (["22222222-2222-2222-2222-222222222222", "nope"], "not a process id"),
+        (7, "not a process id"),
+        ([], "is empty"),
+        ((p for p in ()), "is empty"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            res.iter_student_applications(admission_process=bad)
+    # Rejected by the call itself: no request was made.
+    assert http.calls == []
 
 
 def test_iter_student_applications_updated_after():
@@ -1365,3 +1390,88 @@ def test_application_sweep_reads_with_a_longer_timeout():
     assert _sweep_timeout((5, 600)) == (5, 600)  # a longer limit is kept
     assert _sweep_timeout((10, None)) == (10, None)  # as is no read limit
     assert _sweep_timeout(None) is None
+
+
+# ── The application sweep while the school changes under it ──
+
+def _student(student_id, *application_ids):
+    return {"id": student_id, "sid": student_id.upper(), "applications": [
+        _student_application(id=i) for i in application_ids]}
+
+
+def test_application_sweep_yields_each_student_once_when_pages_shift():
+    from enrolhq.resources.applications import ApplicationsResource
+    # Students come newest first. One added after page 1 was read pushes the
+    # rest along, so the last student of page 1 is first on page 2.
+    http = _FakeHttp(
+        {"count": 3, "next": "more", "results": [_student("a", "sa-a"), _student("b", "sa-b1", "sa-b2")]},
+        {"count": 4, "next": None, "results": [_student("b", "sa-b1", "sa-b2"), _student("c", "sa-c")]},
+    )
+    rows = list(ApplicationsResource(http, BASE).iter_student_applications())
+    assert [row["id"] for row in rows] == ["sa-a", "sa-b1", "sa-b2", "sa-c"]
+
+
+def test_application_sweep_does_not_dedupe_records_without_an_id():
+    from enrolhq.resources.applications import ApplicationsResource
+    http = _FakeHttp({"count": 2, "next": None, "results": [
+        {"applications": [_student_application(id="sa-1")]},
+        {"applications": [_student_application(id="sa-2")]},
+    ]})
+    rows = list(ApplicationsResource(http, BASE).iter_student_applications())
+    assert [row["id"] for row in rows] == ["sa-1", "sa-2"]
+
+
+def test_application_sweep_carries_on_after_an_error(sleeps):
+    from enrolhq.resources.applications import ApplicationsResource
+    http = _FakeHttp(
+        {"count": 3, "next": "more", "results": [_student("a", "sa-a")]},
+        TIMED_OUT, TIMED_OUT, TIMED_OUT, TIMED_OUT,  # the try and three retries
+        {"count": 3, "next": "more", "results": [_student("b", "sa-b")]},
+        {"count": 3, "next": None, "results": [_student("c", "sa-c")]},
+    )
+    sweep = ApplicationsResource(http, BASE).iter_student_applications()
+
+    assert next(sweep)["id"] == "sa-a"
+    with pytest.raises(EnrolHQError, match="timed out"):
+        next(sweep)
+    # Not over: the page that failed is asked for again, and nothing is
+    # lost or repeated. (A generator would have ended here.)
+    assert [row["id"] for row in sweep] == ["sa-b", "sa-c"]
+    assert [params["page"] for _, params in http.calls] == [1, 2, 2, 2, 2, 2, 3]
+    with pytest.raises(StopIteration):
+        next(sweep)
+
+
+def test_application_sweep_rows_do_not_share_the_student_dict():
+    from enrolhq.resources.applications import ApplicationsResource
+    http = _FakeHttp({"count": 1, "next": None, "results": [_student("a", "sa-1", "sa-2")]})
+    first, second = ApplicationsResource(http, BASE).iter_student_applications()
+
+    assert first["student_profile"] == second["student_profile"]
+    first["student_profile"]["sid"] = "changed"
+    assert second["student_profile"]["sid"] == "A"
+
+
+# ── How long a retry may wait ───────────────────────────────
+
+def test_paginated_iterator_does_not_wait_out_a_long_rate_limit(sleeps):
+    from enrolhq.pagination import PaginatedIterator
+    # An hour's sleep with no sign of why would look like a hang.
+    http = _FakeHttp(RateLimitError(retry_after="3600"), _page("a"))
+    it = PaginatedIterator(http, BASE + "things/", retries=3)
+    with pytest.raises(RateLimitError) as raised:
+        next(it)
+    assert raised.value.retry_after == "3600"
+    assert sleeps == []
+    assert len(http.calls) == 1
+
+    # Five minutes is the most it will wait.
+    http = _FakeHttp(RateLimitError(retry_after="300"), _page("a"))
+    assert next(PaginatedIterator(http, BASE + "things/", retries=3)) == {"id": "a"}
+    assert sleeps == [300.0]
+
+
+def test_retry_backoff_is_capped():
+    from enrolhq.pagination import MAX_RETRY_WAIT, _retry_delay
+    assert [_retry_delay(TIMED_OUT, n) for n in range(8)] == [5, 10, 20, 40, 80, 160, 300, 300]
+    assert MAX_RETRY_WAIT == 300

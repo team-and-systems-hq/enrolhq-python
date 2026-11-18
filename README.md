@@ -375,10 +375,23 @@ for app in client.applications.iter_student_applications(
 
 `iter_student_applications()` reads full student records, 100 per request.
 Each request takes around 10 seconds, so allow about 25 minutes for a school
-with 15,000 students. A request that times out, or meets a server error or a
-rate limit, is repeated up to three times, and each gets a 120-second read
-timeout, so one slow page does not lose the sweep. `admission_process=`
-narrows the rows on your side; the server still reads every student.
+with 15,000 students. Over that long:
+
+- **It is not a snapshot.** Students come newest first, a page at a time. One
+  added while the sweep runs pushes the rest along, so the same student turns
+  up again on the next page; the sweep yields each student once only. One
+  deleted or merged away pulls the rest back, and a student is then missed
+  until the next sweep.
+- **One slow page does not lose it.** Each request gets a 120-second read
+  timeout, and one that times out or meets a server error or a rate limit is
+  repeated up to three times. If it still fails the error is raised, but the
+  sweep is not over: calling `next()` on it again asks for the same page, so
+  you can wait and carry on instead of starting again.
+
+`admission_process=` takes a process `id` (or several) and narrows the rows
+on your side; the server still reads every student. Anything that is not a
+UUID raises `ValueError` before the first request, so a process record or a
+title passed by mistake does not cost a sweep that returns nothing.
 `updated_after=` is the one filter the server applies, which makes it the way
 to keep a sync cheap:
 
@@ -389,9 +402,10 @@ for app in client.applications.iter_student_applications(
     ...
 ```
 
-`updated_after` follows changes to the student, their carers, form
-submissions, payments, bookings and documents rather than the applications
-themselves, so run a full sweep from time to time.
+`updated_after` keeps students changed at or after that time. It follows
+changes to the student, their carers, form submissions, payments, enquiries,
+event bookings, interviews and their bookings, and documents rather than the
+applications themselves, so run a full sweep from time to time.
 
 To pull every submission of a process's form, whether or not it is attached
 to an application:

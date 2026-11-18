@@ -12,6 +12,10 @@ MAX_PAGES = 10_000
 #: Seconds to wait before the first retry of a failed page; doubles each time.
 RETRY_BASE_DELAY = 5
 
+#: The longest a single wait may be, in seconds. Backing off never waits
+#: longer, and a 429 that asks for more is raised instead of waited out.
+MAX_RETRY_WAIT = 300
+
 
 def _is_transient(exc: EnrolHQError) -> bool:
     """Whether repeating the same GET could succeed.
@@ -25,14 +29,20 @@ def _is_transient(exc: EnrolHQError) -> bool:
     return exc.status_code == 429 or exc.status_code >= 500
 
 
-def _retry_delay(exc: EnrolHQError, attempt: int) -> float:
-    """Seconds to wait before retry number *attempt* (0-based)."""
+def _retry_delay(exc: EnrolHQError, attempt: int) -> Optional[float]:
+    """Seconds to wait before retry number *attempt* (0-based).
+
+    ``None`` means do not retry: the server asked for a wait longer than
+    :data:`MAX_RETRY_WAIT`, and sleeping that long would look like a hang.
+    """
     if isinstance(exc, RateLimitError):
         try:
-            return max(float(exc.retry_after), 0)
+            asked = max(float(exc.retry_after), 0)
         except (TypeError, ValueError):
             pass  # no usable Retry-After header: back off as usual
-    return RETRY_BASE_DELAY * 2 ** attempt
+        else:
+            return asked if asked <= MAX_RETRY_WAIT else None
+    return min(RETRY_BASE_DELAY * 2 ** attempt, MAX_RETRY_WAIT)
 
 
 class PaginatedResponse:
@@ -85,8 +95,9 @@ class PaginatedIterator:
     ``retries``, a page that fails for a passing reason (a timeout, a dropped
     connection, a 5xx or a 429) is asked for again that many times first,
     waiting 5, 10, 20, ... seconds between tries (or as long as a 429's
-    ``Retry-After`` says). ``timeout`` overrides the client's timeout for
-    these requests.
+    ``Retry-After`` says). No wait is longer than five minutes: a 429 that
+    asks for more is raised straight away. ``timeout`` overrides the client's
+    timeout for these requests.
     """
 
     def __init__(
@@ -151,7 +162,10 @@ class PaginatedIterator:
             except EnrolHQError as exc:
                 if attempt >= self._retries or not _is_transient(exc):
                     raise
-                time.sleep(_retry_delay(exc, attempt))
+                delay = _retry_delay(exc, attempt)
+                if delay is None:
+                    raise
+                time.sleep(delay)
                 attempt += 1
 
     @property
