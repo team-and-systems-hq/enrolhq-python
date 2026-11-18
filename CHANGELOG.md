@@ -34,12 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     updated_after=)`: every application at the school in one sweep, each row
     carrying the student's id and names. `admission_process` keeps one
     process's rows (or several) and raises `ValueError` up front for
-    anything that is not a UUID; `updated_after` is the only filter the
-    server applies. A sweep of a large school runs for many minutes, so each
-    request gets a 120-second read timeout and is repeated up to three times
-    if it times out or meets a 5xx or 429. If it still fails the error is
-    raised and `next()` asks for the same page again. Each student is
-    yielded once even when pages shift under the sweep.
+    anything that is not a UUID, or for an empty collection. `updated_after`
+    is the only filter the server applies. A sweep of a large school runs
+    for many minutes, so each request gets a 120-second read timeout and is
+    repeated up to three times if it times out or meets a 5xx or 429. If it
+    still fails the error is raised and `next()` asks for the same page
+    again. Each student is yielded once even when pages shift under the
+    sweep.
   - The server only puts `applications` on the `v3alpha` student record; v2
     has no such key. These two methods call `v3alpha` whatever version the
     base URL names. Nothing else changes version.
@@ -114,6 +115,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PaginatedIterator` skipped a page after an error: the page number moved on
   before the request, so calling `next()` again after a failure asked for the
   following page. It now stays on the page that failed.
+- A list whose last page was emptied while it was being read ended in
+  `NotFoundError`: the previous page said there was more, and the server
+  answers 404 for a page past the end. `PaginatedIterator` now treats a 404
+  on any page after the first as the end of the list.
 - `client.activity_log.create()` never worked: it sent a `text` field the
   server doesn't have and left out the required `activity_kind` and
   `occurred_at`. It is now `create(student_profile_id, activity_kind,

@@ -4,7 +4,7 @@ import time
 from collections import deque
 from typing import Any, Deque, Dict, Iterator, List, Optional
 
-from .exceptions import APIError, EnrolHQError, RateLimitError
+from .exceptions import APIError, EnrolHQError, NotFoundError, RateLimitError
 
 #: Default safety limit to prevent infinite pagination loops.
 MAX_PAGES = 10_000
@@ -98,6 +98,10 @@ class PaginatedIterator:
     ``Retry-After`` says). No wait is longer than five minutes: a 429 that
     asks for more is raised straight away. ``timeout`` overrides the client's
     timeout for these requests.
+
+    A 404 for any page after the first ends the iteration instead of raising.
+    The server answers 404 for a page past the end, which happens when rows
+    are removed after the previous page said there were more.
     """
 
     def __init__(
@@ -144,7 +148,14 @@ class PaginatedIterator:
         if number > self._max_pages:
             self._exhausted = True
             return
-        data = self._get_page({**self._params, "page": number})
+        try:
+            data = self._get_page({**self._params, "page": number})
+        except NotFoundError:
+            if number == 1:
+                raise  # the list itself is missing, not a page of it
+            # Past the end: rows went since the last page said "more".
+            self._exhausted = True
+            return
         # Only move on once the page has arrived (see the class docstring).
         self._page = number
         page = PaginatedResponse(data)

@@ -192,17 +192,25 @@ class ApplicationsResource(BaseResource):
         A request that times out or meets a server error or rate limit is
         repeated up to three times. If it still fails the error is raised,
         but the sweep is not over: calling ``next()`` again asks for the same
-        page, so a caller can wait and carry on instead of starting again::
+        page, so a caller can wait and carry on instead of starting again.
+        Give up after a few failures in a row, because an error that will not
+        pass (a 401 or 403, a base URL the sweep cannot use) comes back every
+        time::
 
             sweep = client.applications.iter_student_applications()
+            failures = 0
             while True:
                 try:
                     app = next(sweep)
                 except StopIteration:
                     break
                 except EnrolHQError:
+                    failures += 1
+                    if failures > 3:
+                        raise
                     time.sleep(300)     # then the same page is asked for again
                     continue
+                failures = 0
                 ...
 
         Args:
@@ -210,8 +218,9 @@ class ApplicationsResource(BaseResource):
                 from ``client.admission_processes``), or in any of several.
                 The server has no such filter, so every student is still
                 read; this only narrows what is yielded. Anything that is
-                not a UUID, and an empty collection, raises ``ValueError``
-                before the first request.
+                not a UUID raises ``ValueError`` before the first request,
+                and so does an empty collection (pass ``None`` for every
+                process).
             updated_after: Only students changed at or after this time (an
                 aware ``datetime`` or an ISO 8601 string with an offset).
                 This is the only filter the endpoint applies; others are
@@ -594,14 +603,25 @@ class _StudentApplicationSweep:
         #: added mid-sweep, and the same student then comes back.
         self._seen: Set[Any] = set()
         self._rows: Deque[Dict[str, Any]] = deque()
+        #: Set once a record arrives without ``applications``. Every record
+        #: of that API version lacks it, so the sweep cannot go on: it raises
+        #: this again each time rather than work through the school and end
+        #: as if nobody had an application.
+        self._unusable: Optional[EnrolHQError] = None
 
     def __iter__(self) -> "_StudentApplicationSweep":
         return self
 
     def __next__(self) -> Dict[str, Any]:
+        if self._unusable is not None:
+            raise self._unusable
         while not self._rows:
             student = next(self._students)  # StopIteration ends the sweep
-            applications = _student_applications_of(student, self._url)
+            try:
+                applications = _student_applications_of(student, self._url)
+            except EnrolHQError as exc:
+                self._unusable = exc
+                raise
             student_id = student.get("id")
             if student_id is not None:
                 if student_id in self._seen:

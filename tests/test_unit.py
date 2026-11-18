@@ -1475,3 +1475,118 @@ def test_retry_backoff_is_capped():
     from enrolhq.pagination import MAX_RETRY_WAIT, _retry_delay
     assert [_retry_delay(TIMED_OUT, n) for n in range(8)] == [5, 10, 20, 40, 80, 160, 300, 300]
     assert MAX_RETRY_WAIT == 300
+
+
+# ── Errors that will not pass ───────────────────────────────
+
+def test_paginated_iterator_treats_a_404_past_the_first_page_as_the_end(sleeps):
+    from enrolhq.pagination import PaginatedIterator
+    # The last page said there was more, then rows were removed: the server
+    # answers 404 ("Invalid page.") for a page past the end.
+    past_the_end = NotFoundError(404, detail="Invalid page.")
+    http = _FakeHttp(_page("a", "b", more=True), past_the_end)
+    it = PaginatedIterator(http, BASE + "things/", retries=3)
+
+    assert [item["id"] for item in it] == ["a", "b"]
+    assert sleeps == []  # a 404 is not retried
+    with pytest.raises(StopIteration):
+        next(it)
+    assert len(http.calls) == 2  # and the list is not asked for again
+
+
+def test_paginated_iterator_raises_a_404_on_the_first_page():
+    from enrolhq.pagination import PaginatedIterator
+    # Nothing has been read: the list itself is missing.
+    http = _FakeHttp(NotFoundError(404, detail="Not found."))
+    with pytest.raises(NotFoundError):
+        next(PaginatedIterator(http, BASE + "no-such-list/"))
+
+
+def test_application_sweep_ends_when_a_removal_empties_the_last_page():
+    from enrolhq.resources.applications import ApplicationsResource
+    http = _FakeHttp(
+        {"count": 101, "next": "more", "results": [_student("a", "sa-a"), _student("b", "sa-b")]},
+        NotFoundError(404, detail="Invalid page."),
+    )
+    rows = list(ApplicationsResource(http, BASE).iter_student_applications())
+    assert [row["id"] for row in rows] == ["sa-a", "sa-b"]
+
+
+def test_application_sweep_never_ends_normally_without_the_applications_key():
+    from enrolhq.resources.applications import ApplicationsResource
+    # A base URL the version swap cannot rewrite: every record lacks the key.
+    http = _FakeHttp({"count": 3, "next": None, "results": [
+        {"id": "app-1"}, {"id": "app-2"}, {"id": "app-3"}]})
+    sweep = ApplicationsResource(
+        http, "https://proxy.example.com/enrolhq/"
+    ).iter_student_applications()
+
+    # More calls than there are students: it must never reach StopIteration,
+    # which would read as "this school has no applications".
+    for _ in range(6):
+        with pytest.raises(EnrolHQError, match="v3alpha"):
+            next(sweep)
+    assert len(http.calls) == 1
+
+
+def _documented_retry_loop(sweep, sleep):
+    """The loop from the iter_student_applications() docstring."""
+    rows = []
+    failures = 0
+    while True:
+        try:
+            app = next(sweep)
+        except StopIteration:
+            break
+        except EnrolHQError:
+            failures += 1
+            if failures > 3:
+                raise
+            sleep(300)
+            continue
+        failures = 0
+        rows.append(app)
+    return rows
+
+
+def test_documented_retry_loop_gives_up_on_an_error_that_will_not_pass(sleeps):
+    from enrolhq.resources.applications import ApplicationsResource
+    waits = []
+    first = {"count": 2, "next": "more", "results": [_student("a", "sa-a")]}
+
+    # Refused: the same page is refused every time it is asked for.
+    http = _FakeHttp(first, *[ForbiddenError(403)] * 10)
+    with pytest.raises(ForbiddenError):
+        _documented_retry_loop(
+            ApplicationsResource(http, BASE).iter_student_applications(), waits.append
+        )
+    assert waits == [300, 300, 300]
+    assert len(http.calls) == 5  # page 1, then page 2 four times
+
+    # A base URL the sweep cannot use.
+    del waits[:]
+    http = _FakeHttp({"count": 2, "next": None, "results": [{"id": "x"}, {"id": "y"}]})
+    with pytest.raises(EnrolHQError, match="v3alpha"):
+        _documented_retry_loop(
+            ApplicationsResource(
+                http, "https://proxy.example.com/enrolhq/"
+            ).iter_student_applications(),
+            waits.append,
+        )
+    assert waits == [300, 300, 300]
+
+
+def test_documented_retry_loop_rides_out_an_error_that_passes(sleeps):
+    from enrolhq.resources.applications import ApplicationsResource
+    waits = []
+    http = _FakeHttp(
+        {"count": 2, "next": "more", "results": [_student("a", "sa-a")]},
+        TIMED_OUT, TIMED_OUT, TIMED_OUT, TIMED_OUT,  # the sweep's own tries
+        TIMED_OUT, TIMED_OUT, TIMED_OUT, TIMED_OUT,  # and again after a wait
+        {"count": 2, "next": None, "results": [_student("b", "sa-b")]},
+    )
+    rows = _documented_retry_loop(
+        ApplicationsResource(http, BASE).iter_student_applications(), waits.append
+    )
+    assert [row["id"] for row in rows] == ["sa-a", "sa-b"]
+    assert waits == [300, 300]

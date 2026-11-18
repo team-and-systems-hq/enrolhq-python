@@ -386,12 +386,15 @@ with 15,000 students. Over that long:
   timeout, and one that times out or meets a server error or a rate limit is
   repeated up to three times. If it still fails the error is raised, but the
   sweep is not over: calling `next()` on it again asks for the same page, so
-  you can wait and carry on instead of starting again.
+  you can wait and carry on instead of starting again. Give up after a few
+  failures in a row: an error that will not pass, such as a 401 or 403,
+  comes back every time. The method's docstring has the loop.
 
 `admission_process=` takes a process `id` (or several) and narrows the rows
 on your side; the server still reads every student. Anything that is not a
-UUID raises `ValueError` before the first request, so a process record or a
-title passed by mistake does not cost a sweep that returns nothing.
+UUID raises `ValueError` before the first request, and so does an empty
+collection, so a process record, a title or an empty list passed by mistake
+does not cost a sweep that returns nothing.
 `updated_after=` is the one filter the server applies, which makes it the way
 to keep a sync cheap:
 
