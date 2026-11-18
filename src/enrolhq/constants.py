@@ -28,6 +28,14 @@ class ApplicationStatus(IntEnum):
     CUSTOM_6 = 20
     CUSTOM_7 = 21
     CUSTOM_8 = 22
+    CUSTOM_9 = 23
+    CUSTOM_10 = 24
+    CUSTOM_11 = 25
+    CUSTOM_12 = 26
+    CUSTOM_13 = 27
+    CUSTOM_14 = 28
+    CUSTOM_15 = 29
+    CUSTOM_16 = 30
 
 
 class Gender(IntEnum):

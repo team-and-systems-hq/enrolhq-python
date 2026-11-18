@@ -106,7 +106,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 
 | Resource | Access | Operations |
 |----------|--------|------------|
-| Applications | `client.applications` | list, get, create, update, count, field_choices, actions, bulk ops |
+| Applications | `client.applications` | list, get, create, update, count, field_choices, student_applications, iter_student_applications, actions, bulk ops |
 | Leads | `client.leads` | list, get, create, update, references, create_reference |
 | Forms | `client.forms` | list, get, find, definition, save_schema, update_definition, check_local_fields, preview, validate_step, submits, get_submit, answers, consents, iter_answers, export_submits |
 | Documents | `client.documents` | list, upload, download, delete |
@@ -128,6 +128,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Event settings | `client.event_settings` | get, update, update_fields, kind_options, ensure_kinds |
 | Entry grade settings | `client.entry_grade_settings` | get, update, modify_grades |
 | Payment settings | `client.payment_settings` | get, update, update_fields |
+| Admission processes | `client.admission_processes` | list, get (read-only) |
 
 ## Comms Log entries and notes
 
@@ -285,6 +286,148 @@ list their fields under `children`, and lists describe their items under
 `.actions.POST.emergency_contacts.child.children.relationship_to_student.choices`).
 
 See [`examples/21_field_choices.py`](examples/21_field_choices.py).
+
+## Admission processes and multiple applications
+
+A school can define several *admission processes*, one per kind of
+application it accepts, for example "Junior School Application" and
+"Scholarship Application". A student then holds one application per process
+they have started, each with its own status and entry details. The SDK reads
+all of this; processes are set up in the dashboard.
+
+That gives "application" two meanings. Everywhere else in this SDK
+(`client.applications`, `application_id`) an application is the **student
+record**. The per-process applications are nested under that record, and the
+server calls them *student applications*.
+
+```python
+from enrolhq import ApplicationStatus
+
+# The school's processes, each with the forms that belong to it
+processes = list(client.admission_processes.list())
+titles = {p["id"]: p["title"] for p in processes}
+
+# One student's applications
+for app in client.applications.student_applications(student_id):
+    print(
+        titles[app["admission_process"]],
+        ApplicationStatus(app["application_status"]).name,
+        "(primary)" if app["is_primary"] else "",
+        app["submitted_at"],
+    )
+```
+
+To pull every application in a process, with what the family answered:
+
+```python
+scholarship = next(p for p in processes if p["title"] == "Scholarship Application")
+
+for app in client.applications.iter_student_applications(
+    admission_process=scholarship["id"]
+):
+    student = app["student_profile"]        # id, sid, external_id and names
+    print(student["sid"], ApplicationStatus(app["application_status"]).name)
+    for submit in app["form_submits"]:
+        for answer in client.forms.answers(submit["id"]):
+            print("  ", answer["label"], answer["value"])
+```
+
+- **The student record shows the primary application only.** The
+  `application_status`, `entry_grade`, `entry_year`, `campus` and other entry
+  details on `applications.get()` and `applications.list()` are the primary
+  application's, and filters such as `application_statuses=` match on them.
+  A student can read as *Trashed* there while another of their applications
+  is still active, so read the student applications before relying on a
+  status. At most one application is primary, and a student can have
+  applications with none primary (for example after a profile merge).
+- **`applications.get()` does not include them.** The list is only on the
+  `v3alpha` student record (`GET /api/v3alpha/applications/{id}/`, key
+  `applications`); the v2 record has no such key. `student_applications()`
+  and `iter_student_applications()` read `v3alpha` for you, whatever version
+  your base URL names, and everything else stays on your version. `v3alpha`
+  can change without notice.
+- **Check `is_new_entry_details_missing` before using an application's entry
+  details.** Some processes ask for their own year level and entry year. When
+  none were recorded for an application, this flag is true and the row's
+  `entry_grade`, `entry_year` and `campus` are copies of the student
+  record's, which can belong to another campus. The campus applied for is
+  the process's `campus`. Submitted applications can be in this state.
+- **Answers come from the form submission.** Each application lists its
+  `form_submits`. For a custom form, `client.forms.answers(submit["id"])`
+  returns every element with the question the family saw: the form's own
+  questions, and the profile blocks (student details, entry details, parents,
+  medical) as dicts. `form_pdf` is the `id` of the submitted PDF in
+  `client.documents.list()`.
+- **The built-in EOI and enrolment forms have no readable submission.** A
+  process can also use those forms (`kind` `GPA` or `ENROLMENT` in
+  `client.forms.list()`). Their `form_submits` rows still carry the dates and
+  `form_pdf`, but `forms.get_submit()` and `forms.answers()` return 404 for
+  them: the answers are the student record itself (`applications.get()`).
+- **Not every submission belongs to an application.** A submission made
+  before its form joined a process is attached to no application, so it is
+  absent from `student_applications()` and `iter_student_applications()`
+  even when the form was completed. To get every submission of a form, go by
+  form: `client.forms.iter_answers(form=form_id)`, or `export_submits()`
+  below. The student record's `custom_form_submits` lists them too.
+- **Not every school has this.** Where the feature is off,
+  `client.admission_processes` raises `ForbiddenError` and
+  `student_applications()` returns `[]`.
+
+`iter_student_applications()` reads full student records, 100 per request.
+Each request takes around 10 seconds, so allow about 25 minutes for a school
+with 15,000 students. Over that long:
+
+- **It is not a snapshot.** Students come newest first, a page at a time. One
+  added while the sweep runs pushes the rest along, so the same student turns
+  up again on the next page; the sweep yields each student once only. One
+  deleted or merged away pulls the rest back, and a student is then missed
+  until the next sweep.
+- **One slow page does not lose it.** Each request gets a 120-second read
+  timeout, and one that times out or meets a server error or a rate limit is
+  repeated up to three times. If it still fails the error is raised, but the
+  sweep is not over: calling `next()` on it again asks for the same page, so
+  you can wait and carry on instead of starting again. Give up after a few
+  failures in a row: an error that will not pass, such as a 401 or 403,
+  comes back every time. The method's docstring has the loop.
+
+`admission_process=` takes a process `id` (or several) and narrows the rows
+on your side; the server still reads every student. Anything that is not a
+UUID raises `ValueError` before the first request, and so does an empty
+collection, so a process record, a title or an empty list passed by mistake
+does not cost a sweep that returns nothing.
+`updated_after=` is the one filter the server applies, which makes it the way
+to keep a sync cheap:
+
+```python
+for app in client.applications.iter_student_applications(
+    updated_after="2027-02-01T00:00:00+13:00"
+):
+    ...
+```
+
+`updated_after` keeps students changed at or after that time. It follows
+changes to the student, their carers, form submissions, payments, enquiries,
+event bookings, interviews and their bookings, and documents rather than the
+applications themselves, so run a full sweep from time to time.
+
+To pull every submission of a process's form, whether or not it is attached
+to an application:
+
+```python
+form_id = scholarship["forms"][0]["custom_form"]
+
+for record in client.forms.iter_answers(form=form_id):
+    print(record["student_profile"]["last_name"], record["completed_at"])
+    for answer in record["answers"]:
+        print("  ", answer["label"], answer["value"])
+```
+
+`client.forms.export_submits("out.csv", form=form_id)` returns the same
+submissions as a CSV in a single request. In both, the status shown
+(`student_profile["application_status"]`, the `profile.application_status`
+column) is the student record's, not the application's.
+
+See [`examples/22_admission_processes.py`](examples/22_admission_processes.py).
 
 ## Configuring a school
 

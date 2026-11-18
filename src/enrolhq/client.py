@@ -7,6 +7,7 @@ from .auth import TokenAuth
 from .http import DEFAULT_TIMEOUT, HttpClient
 from .resources import (
     ActivityLogResource,
+    AdmissionProcessesResource,
     AnalyticsResource,
     ApplicationsResource,
     AuditLogResource,
@@ -144,6 +145,9 @@ class EnrolHQClient:
             self._http, self.base_url
         )
         self.payment_settings = PaymentSettingsResource(self._http, self.base_url)
+        self.admission_processes = AdmissionProcessesResource(
+            self._http, self.base_url
+        )
 
     def __repr__(self) -> str:
         return f"EnrolHQClient(base_url={self.base_url!r})"

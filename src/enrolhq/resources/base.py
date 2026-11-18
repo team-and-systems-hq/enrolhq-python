@@ -1,6 +1,7 @@
 """Base resource with shared HTTP helpers."""
 
 import copy
+import re
 from typing import Any, Dict, List, Optional
 
 from ..http import HttpClient
@@ -51,6 +52,10 @@ def deep_merge(base: Dict[str, Any], changes: Dict[str, Any]) -> Dict[str, Any]:
     return merged
 
 
+#: The trailing ``/api/<version>/`` of a base URL, e.g. ``/api/v2/``.
+_API_VERSION_SUFFIX = re.compile(r"/api/v[0-9]+[a-z]*/$")
+
+
 class BaseResource:
     """Base class for all API resources."""
 
@@ -60,6 +65,16 @@ class BaseResource:
 
     def _url(self, path: str = "") -> str:
         return self._base_url + path
+
+    def _url_for_version(self, version: str, path: str = "") -> str:
+        """Return *path* under another API version on the same host.
+
+        Every version serves the same routes; only some response bodies
+        differ. A base URL that does not end in ``/api/<version>/`` is used
+        unchanged.
+        """
+        base = _API_VERSION_SUFFIX.sub(f"/api/{version}/", self._base_url)
+        return base + path
 
     def _list(
         self,

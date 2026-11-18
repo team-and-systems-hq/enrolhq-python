@@ -1,6 +1,7 @@
 """EnrolHQ API resource modules."""
 
 from .activity_log import ActivityLogResource
+from .admission_processes import AdmissionProcessesResource
 from .analytics import AnalyticsResource
 from .applications import ApplicationsResource
 from .audit_log import AuditLogResource
@@ -25,6 +26,7 @@ from .staff import StaffResource
 
 __all__ = [
     "ActivityLogResource",
+    "AdmissionProcessesResource",
     "AnalyticsResource",
     "ApplicationsResource",
     "AuditLogResource",

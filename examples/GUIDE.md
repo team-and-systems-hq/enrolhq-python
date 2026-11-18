@@ -684,6 +684,60 @@ has the curl commands.
 
 ---
 
+## 22 - Admission Processes
+
+**File:** [`22_admission_processes.py`](22_admission_processes.py)
+
+Lists a school's admission processes (the kinds of application it accepts),
+then pulls the applications in one of them with the answers the family gave.
+A student holds one application per process. Read-only.
+
+```python
+processes = list(client.admission_processes.list())
+titles = {p["id"]: p["title"] for p in processes}
+
+# One student
+for app in client.applications.student_applications(student_id):
+    print(titles[app["admission_process"]],
+          ApplicationStatus(app["application_status"]).name,
+          app["is_primary"])
+
+# Every application in one process, with its answers
+for app in client.applications.iter_student_applications(
+    admission_process=process_id, updated_after=since
+):
+    print(app["student_profile"]["sid"], app["application_status"])
+    for submit in app["form_submits"]:
+        answers = client.forms.answers(submit["id"])   # custom forms only
+```
+
+- `applications.get()` and `list()` show the primary application's status and
+  entry details only. A student's other applications, each with its own
+  status, are only in the student applications.
+- When a row's `is_new_entry_details_missing` is true, its entry grade, year
+  and campus are copies of the student record's, not this application's.
+- That list is on the `v3alpha` student record, not the v2 one. The SDK reads
+  `v3alpha` for these two methods whatever version your base URL names.
+- Each process's `forms` rows name a `custom_form` (an `id` from
+  `client.forms.list()`), the status a new application opens in, and whether
+  the form is the process's submission form.
+- A submission made before its form joined a process is attached to no
+  application, so it is not in these rows. `client.forms.iter_answers(form=)`
+  returns every submission of a form.
+- `forms.answers()` works for custom forms. A process built on the built-in
+  EOI or enrolment form (`kind` `GPA` / `ENROLMENT`) has no readable
+  submission: those answers are the student record itself.
+- `iter_student_applications()` reads full student records, 100 per request
+  at around 10 seconds each, and repeats a request that times out. It is not
+  a snapshot: each student is yielded once, but one removed while it runs can
+  hide another until the next sweep.
+- `updated_after` is the only filter the server applies; `admission_process`
+  narrows the rows on your side and must be a process `id`.
+- Schools without the feature answer `client.admission_processes` with 403
+  (`ForbiddenError`).
+
+---
+
 ## Error Handling
 
 All examples will raise clear exceptions on failure:
@@ -734,7 +788,7 @@ All exceptions inherit from `EnrolHQError`, so you can use it as a catch-all. Al
 | `ENROLMENT_OFFER` | 12 | Enrolment offer |
 | `INTERVIEW` | 13 | Interview |
 | `PENDING` | 14 | Pending |
-| `CUSTOM_1` .. `CUSTOM_8` | 15-22 | Custom statuses |
+| `CUSTOM_1` .. `CUSTOM_16` | 15-30 | Custom statuses |
 
 ### Gender
 

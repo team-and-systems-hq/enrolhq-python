@@ -1,10 +1,48 @@
 """Pagination helpers for EnrolHQ list endpoints."""
 
+import time
 from collections import deque
 from typing import Any, Deque, Dict, Iterator, List, Optional
 
+from .exceptions import APIError, EnrolHQError, NotFoundError, RateLimitError
+
 #: Default safety limit to prevent infinite pagination loops.
 MAX_PAGES = 10_000
+
+#: Seconds to wait before the first retry of a failed page; doubles each time.
+RETRY_BASE_DELAY = 5
+
+#: The longest a single wait may be, in seconds. Backing off never waits
+#: longer, and a 429 that asks for more is raised instead of waited out.
+MAX_RETRY_WAIT = 300
+
+
+def _is_transient(exc: EnrolHQError) -> bool:
+    """Whether repeating the same GET could succeed.
+
+    True for failures below HTTP (timeouts, dropped connections), for server
+    errors and for rate limiting. False for every other HTTP error: a 403 or
+    404 will be the same next time.
+    """
+    if not isinstance(exc, APIError):
+        return True
+    return exc.status_code == 429 or exc.status_code >= 500
+
+
+def _retry_delay(exc: EnrolHQError, attempt: int) -> Optional[float]:
+    """Seconds to wait before retry number *attempt* (0-based).
+
+    ``None`` means do not retry: the server asked for a wait longer than
+    :data:`MAX_RETRY_WAIT`, and sleeping that long would look like a hang.
+    """
+    if isinstance(exc, RateLimitError):
+        try:
+            asked = max(float(exc.retry_after), 0)
+        except (TypeError, ValueError):
+            pass  # no usable Retry-After header: back off as usual
+        else:
+            return asked if asked <= MAX_RETRY_WAIT else None
+    return min(RETRY_BASE_DELAY * 2 ** attempt, MAX_RETRY_WAIT)
 
 
 class PaginatedResponse:
@@ -51,6 +89,19 @@ class PaginatedIterator:
 
         for item in PaginatedIterator(http, url, params):
             print(item)
+
+    A page that fails raises, and the iterator stays on that page, so calling
+    ``next()`` again asks for the same page rather than skipping it. With
+    ``retries``, a page that fails for a passing reason (a timeout, a dropped
+    connection, a 5xx or a 429) is asked for again that many times first,
+    waiting 5, 10, 20, ... seconds between tries (or as long as a 429's
+    ``Retry-After`` says). No wait is longer than five minutes: a 429 that
+    asks for more is raised straight away. ``timeout`` overrides the client's
+    timeout for these requests.
+
+    A 404 for any page after the first ends the iteration instead of raising.
+    The server answers 404 for a page past the end, which happens when rows
+    are removed after the previous page said there were more.
     """
 
     def __init__(
@@ -60,14 +111,20 @@ class PaginatedIterator:
         params: Optional[Dict[str, Any]] = None,
         page_size: int = 100,
         max_pages: int = MAX_PAGES,
+        retries: int = 0,
+        timeout: Any = None,
     ) -> None:
         if page_size < 1:
             raise ValueError("page_size must be >= 1")
+        if retries < 0:
+            raise ValueError("retries must be >= 0")
         self._http = http
         self._url = url
         self._params = dict(params or {})
         self._params["page_size"] = page_size
         self._max_pages = max_pages
+        self._retries = retries
+        self._timeout = timeout
         self._page = 0
         self._buffer: Deque[Dict[str, Any]] = deque()
         self._exhausted = False
@@ -87,18 +144,40 @@ class PaginatedIterator:
         return self._buffer.popleft()
 
     def _fetch_next(self) -> None:
-        self._page += 1
-        if self._page > self._max_pages:
+        number = self._page + 1
+        if number > self._max_pages:
             self._exhausted = True
             return
-        params = {**self._params, "page": self._page}
-        resp = self._http.get(self._url, params=params)
-        data = resp.json()
+        try:
+            data = self._get_page({**self._params, "page": number})
+        except NotFoundError:
+            if number == 1:
+                raise  # the list itself is missing, not a page of it
+            # Past the end: rows went since the last page said "more".
+            self._exhausted = True
+            return
+        # Only move on once the page has arrived (see the class docstring).
+        self._page = number
         page = PaginatedResponse(data)
         self._total = page.count
         self._buffer = deque(page.results)
         if not page.next:
             self._exhausted = True
+
+    def _get_page(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        kwargs = {} if self._timeout is None else {"timeout": self._timeout}
+        attempt = 0
+        while True:
+            try:
+                return self._http.get(self._url, params=params, **kwargs).json()
+            except EnrolHQError as exc:
+                if attempt >= self._retries or not _is_transient(exc):
+                    raise
+                delay = _retry_delay(exc, attempt)
+                if delay is None:
+                    raise
+                time.sleep(delay)
+                attempt += 1
 
     @property
     def total_count(self) -> int:

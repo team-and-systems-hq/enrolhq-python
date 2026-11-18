@@ -1,9 +1,37 @@
 """Applications resource."""
 
-from typing import Any, Dict, List, Optional, Union
+import datetime as dt
+import uuid
+from collections import deque
+from collections.abc import Mapping
+from typing import Any, Deque, Dict, Iterable, Iterator, List, Optional, Set, Union
 
+from ..exceptions import EnrolHQError
 from ..pagination import PaginatedIterator, PaginatedResponse
 from .base import BaseResource
+
+#: The API version whose student record carries ``applications`` (one entry
+#: per admission process). The v1 and v2 records have no such key.
+STUDENT_APPLICATIONS_API_VERSION = "v3alpha"
+
+#: ``iter_student_applications()`` reads full student records, 100 a request.
+#: Such a request takes 10 seconds or more and now and then far longer, and
+#: one failure would otherwise lose a sweep that runs for many minutes. So
+#: each request gets at least this read timeout (seconds), and a page that
+#: fails for a passing reason is asked for again this many times.
+SWEEP_READ_TIMEOUT = 120
+SWEEP_RETRIES = 3
+
+#: Student fields copied onto each row of ``iter_student_applications()``.
+STUDENT_SUMMARY_FIELDS = (
+    "id",
+    "sid",
+    "external_id",
+    "first_name",
+    "middle_name",
+    "last_name",
+    "preferred_name",
+)
 
 
 class ApplicationsResource(BaseResource):
@@ -68,6 +96,158 @@ class ApplicationsResource(BaseResource):
         Not available from :meth:`list` — this fetches the detail record.
         """
         return self.get(application_id).get("guardians", [])
+
+    # ── Admission processes ─────────────────────────────────────
+    #
+    # Everywhere else in this SDK an "application" is the student record.
+    # Under admission processes a student also holds one application per
+    # process, which the server calls a student application. Those are only
+    # on the v3alpha student record, so these methods read that version
+    # whatever version the client's base URL names.
+
+    def student_applications(self, application_id: str) -> List[Dict[str, Any]]:
+        """Return the student's applications, one per admission process.
+
+        A school with several admission processes (see
+        ``client.admission_processes``) can hold several applications for one
+        student, e.g. a school application and a scholarship application.
+        Each has its own status and entry details:
+
+        - ``id``, ``created_at`` and ``admission_process`` (the process UUID).
+        - ``is_primary``: the application the student record mirrors.
+        - ``entry_grade``, ``entry_term``, ``entry_year``, ``campus``,
+          ``attendance_type``, ``commencement_date``, ``application_status``.
+        - ``is_new_entry_details_missing``: the process asks for its own
+          entry details and none were recorded for this application. The
+          entry grade, year and campus on the row are then copies of the
+          student record's, which can belong to a different campus, so do
+          not read them as this application's. The campus applied for is
+          the process's ``campus``. A submitted application can be in this
+          state.
+        - ``submitted_at`` and ``completed_at``: set by the process's
+          submission form; ``completed_at`` can come later, e.g. on payment.
+        - ``form_submits``: the form submissions that belong to this
+          application, each with ``id``, ``form``, ``created_at``,
+          ``submitted_at``, ``completed_at`` and ``form_pdf`` (a document
+          id, or ``None``). For a custom form, pass the ``id`` to
+          ``client.forms.answers()`` to read what the family answered. The
+          built-in EOI and enrolment forms have no readable submission (that
+          call returns 404): their answers are the student record itself.
+
+        The entry details and status on the student record (:meth:`get`,
+        :meth:`list`) are those of the primary application. The others are
+        only visible here. At most one application is primary, and a student
+        can have applications with none primary (e.g. after a profile merge).
+
+        This is not the same as ``custom_form_submits`` on :meth:`get`: a
+        submission made before its form joined a process belongs to no
+        application, even if the form was completed, and is not listed here.
+
+        Returns ``[]`` when the student has no application yet, and at schools
+        that do not use admission processes. The data comes from the
+        ``v3alpha`` API, which may change without notice.
+        """
+        url = self._url_for_version(
+            STUDENT_APPLICATIONS_API_VERSION, f"applications/{application_id}/"
+        )
+        return _student_applications_of(self._http.get(url).json(), url)
+
+    def iter_student_applications(
+        self,
+        *,
+        admission_process: Optional[
+            Union[str, uuid.UUID, Iterable[Union[str, uuid.UUID]]]
+        ] = None,
+        updated_after: Optional[Union[str, dt.datetime]] = None,
+        page_size: int = 100,
+    ) -> Iterator[Dict[str, Any]]:
+        """Yield every student application at the school, across all students.
+
+        Each row is as described in :meth:`student_applications`, plus
+        ``student_profile``: the student's ``id``, ``sid``, ``external_id``
+        and names. Students without an application yield nothing::
+
+            for app in client.applications.iter_student_applications(
+                admission_process=process["id"]
+            ):
+                print(app["student_profile"]["sid"], app["application_status"])
+                for submit in app["form_submits"]:
+                    answers = client.forms.answers(submit["id"])  # custom forms
+
+        These are applications, not form submissions. A submission attached
+        to no application (see :meth:`student_applications`) is not here; for
+        every submission of a form use ``client.forms.iter_answers(form=...)``.
+
+        This sweeps the full student records, 100 per request at most. Each
+        request is large and takes around 10 seconds, so a school with 15,000
+        students takes about 25 minutes. That is still far quicker than one
+        :meth:`student_applications` call per student.
+
+        The sweep is not a snapshot. Students come newest first, a page at a
+        time, so a student added while it runs pushes the rest along and the
+        same student turns up again on the next page; each student is yielded
+        once only. A student deleted or merged away while it runs pulls the
+        rest back, and one student is then missed until the next sweep.
+
+        A request that times out or meets a server error or rate limit is
+        repeated up to three times. If it still fails the error is raised,
+        but the sweep is not over: calling ``next()`` again asks for the same
+        page, so a caller can wait and carry on instead of starting again.
+        Give up after a few failures in a row, because an error that will not
+        pass (a 401 or 403, a base URL the sweep cannot use) comes back every
+        time::
+
+            sweep = client.applications.iter_student_applications()
+            failures = 0
+            while True:
+                try:
+                    app = next(sweep)
+                except StopIteration:
+                    break
+                except EnrolHQError:
+                    failures += 1
+                    if failures > 3:
+                        raise
+                    time.sleep(300)     # then the same page is asked for again
+                    continue
+                failures = 0
+                ...
+
+        Args:
+            admission_process: Only applications in this process (an ``id``
+                from ``client.admission_processes``), or in any of several.
+                The server has no such filter, so every student is still
+                read; this only narrows what is yielded. Anything that is
+                not a UUID raises ``ValueError`` before the first request,
+                and so does an empty collection (pass ``None`` for every
+                process).
+            updated_after: Only students changed at or after this time (an
+                aware ``datetime`` or an ISO 8601 string with an offset).
+                This is the only filter the endpoint applies; others are
+                ignored. It follows the student record and its carers, form
+                submissions, payments, enquiries, event bookings, interviews
+                and their bookings, and documents, not the applications
+                themselves, so do a full sweep from time to time.
+            page_size: Students per request (the server caps this at 100).
+                Smaller pages are not quicker: each request has a high fixed
+                cost, so the whole sweep takes longer.
+        """
+        wanted = _admission_process_ids(admission_process)
+        if isinstance(updated_after, dt.datetime):
+            if updated_after.tzinfo is None:
+                raise ValueError("updated_after must be timezone-aware")
+            updated_after = updated_after.isoformat()
+        url = self._url_for_version(STUDENT_APPLICATIONS_API_VERSION, "applications/")
+        params = {} if updated_after is None else {"updated_after": updated_after}
+        students = PaginatedIterator(
+            self._http,
+            url,
+            params=params,
+            page_size=page_size,
+            retries=SWEEP_RETRIES,
+            timeout=_sweep_timeout(self._http.timeout),
+        )
+        return _StudentApplicationSweep(students, url, wanted)
 
     # ── Coded fields ────────────────────────────────────────────
 
@@ -328,6 +508,131 @@ class ApplicationsResource(BaseResource):
         return self._post(
             "applications-list/delete-profiles/", params=filters
         )
+
+
+def _student_applications_of(student: Dict[str, Any], url: str) -> List[Dict[str, Any]]:
+    """Return a v3alpha student record's ``applications``.
+
+    The key is always present on that version, so its absence means the
+    request reached a version that never sends it. Raising then avoids
+    reporting "no applications" for a student who has some.
+    """
+    if "applications" not in student:
+        raise EnrolHQError(
+            f"{url} returned a student record without 'applications'. That "
+            f"list is only on the {STUDENT_APPLICATIONS_API_VERSION} API, "
+            "which the SDK reaches by swapping the version at the end of "
+            "base_url, so base_url must end in /api/<version>/ "
+            "(e.g. /api/v2/)."
+        )
+    return student["applications"]
+
+
+def _sweep_timeout(timeout: Any) -> Any:
+    """Return the client's *timeout* with its read part raised for the sweep.
+
+    *timeout* is as ``requests`` takes it: a number, a ``(connect, read)``
+    pair, or ``None`` for no limit. A longer limit set on the client is kept.
+    """
+    if timeout is None:
+        return None
+    connect, read = timeout if isinstance(timeout, tuple) else (timeout, timeout)
+    if read is not None:
+        read = max(read, SWEEP_READ_TIMEOUT)
+    return (connect, read)
+
+
+def _admission_process_ids(value: Any) -> Optional[Set[str]]:
+    """Return the process ids to keep, as the server writes them, or ``None``.
+
+    A filter that can never match would cost a whole sweep and yield nothing,
+    so anything that is not a UUID is rejected here, before the first request:
+    a process record passed where its ``id`` was meant, a title, an empty
+    collection. UUIDs are normalised, so ``"ABCD..."`` and a hyphen-less id
+    match the lower-case hyphenated form the server sends.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (str, uuid.UUID)):
+        values = [value]
+    elif isinstance(value, Mapping):
+        values = [value]  # rejected below, with the message about records
+    else:
+        try:
+            values = list(value)
+        except TypeError:
+            values = [value]
+        if not values:
+            raise ValueError(
+                "admission_process is empty, which would match no application; "
+                "pass None for every process"
+            )
+    ids = set()
+    for item in values:
+        if isinstance(item, Mapping):
+            raise ValueError(
+                "admission_process takes a process id, not the process record: "
+                'pass process["id"]'
+            )
+        try:
+            ids.add(str(uuid.UUID(str(item))))
+        except ValueError:
+            raise ValueError(
+                f"admission_process: {item!r} is not a process id (a UUID)"
+            ) from None
+    return ids
+
+
+class _StudentApplicationSweep:
+    """The iterator behind ``iter_student_applications()``.
+
+    A class, not a generator: a generator that raises is finished, so a
+    caller who caught a failed page and called ``next()`` again would see the
+    sweep end early, as if the school had been read. Here the failed page is
+    asked for again (``PaginatedIterator`` stays on it).
+    """
+
+    def __init__(
+        self, students: Iterator[Dict[str, Any]], url: str, wanted: Optional[Set[str]]
+    ) -> None:
+        self._students = students
+        self._url = url
+        #: Admission process ids to keep, or ``None`` for all.
+        self._wanted = wanted
+        #: Ids of the students already read. Pages shift when a student is
+        #: added mid-sweep, and the same student then comes back.
+        self._seen: Set[Any] = set()
+        self._rows: Deque[Dict[str, Any]] = deque()
+        #: Set once a record arrives without ``applications``. Every record
+        #: of that API version lacks it, so the sweep cannot go on: it raises
+        #: this again each time rather than work through the school and end
+        #: as if nobody had an application.
+        self._unusable: Optional[EnrolHQError] = None
+
+    def __iter__(self) -> "_StudentApplicationSweep":
+        return self
+
+    def __next__(self) -> Dict[str, Any]:
+        if self._unusable is not None:
+            raise self._unusable
+        while not self._rows:
+            student = next(self._students)  # StopIteration ends the sweep
+            try:
+                applications = _student_applications_of(student, self._url)
+            except EnrolHQError as exc:
+                self._unusable = exc
+                raise
+            student_id = student.get("id")
+            if student_id is not None:
+                if student_id in self._seen:
+                    continue
+                self._seen.add(student_id)
+            summary = {key: student.get(key) for key in STUDENT_SUMMARY_FIELDS}
+            for application in applications:
+                if self._wanted is None or application["admission_process"] in self._wanted:
+                    # A copy each, so changing one row's student leaves the rest.
+                    self._rows.append({**application, "student_profile": dict(summary)})
+        return self._rows.popleft()
 
 
 def _collect_choices(

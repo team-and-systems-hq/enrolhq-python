@@ -387,6 +387,17 @@ client.cms_settings.append_custom_scripts(
 - **Audience:** a form shows to a parent only when the profile matches all of
   its filters (campus, application status, entry grade and year, …).
   Compare with the school's similar forms before choosing statuses.
+- **Forms in an admission process:** `definition()` reports the form's
+  `admission_process` and `is_application_submission_form`. Both are
+  read-only here; a process's forms are chosen in the dashboard (see the
+  README's *Admission processes and multiple applications*). Saving a form
+  that belongs to a process is
+  rejected if `is_allowed_to_third_party` is true. If the process asks for
+  new entry details, publishing is also rejected unless the schema has an
+  enabled `ENTRY_DETAILS` element or the form depends on another form in the
+  same process. On such a form avoid the audience filters: they are checked
+  against the student's existing entry details and can stop a parent from
+  starting the new application.
 
 ## 10. Workflow: building a form from a school's document
 
