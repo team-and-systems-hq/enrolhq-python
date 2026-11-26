@@ -11,10 +11,12 @@ from .resources import (
     AnalyticsResource,
     ApplicationsResource,
     AuditLogResource,
+    AutomationsResource,
     CampusesResource,
     CmsSettingsResource,
     DocumentsResource,
     EmailLogResource,
+    EmailTemplatesResource,
     EntryGradeSettingsResource,
     EventBookingsResource,
     EventSettingsResource,
@@ -148,6 +150,8 @@ class EnrolHQClient:
         self.admission_processes = AdmissionProcessesResource(
             self._http, self.base_url
         )
+        self.email_templates = EmailTemplatesResource(self._http, self.base_url)
+        self.automations = AutomationsResource(self._http, self.base_url)
 
     def __repr__(self) -> str:
         return f"EnrolHQClient(base_url={self.base_url!r})"

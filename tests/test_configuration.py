@@ -97,7 +97,8 @@ def test_client_default_domain_unchanged():
 def test_client_has_configuration_resources():
     c = EnrolHQClient(instance="x", api_token="t")
     for attr in ("school", "campuses", "look_and_feel", "event_settings",
-                 "entry_grade_settings", "payment_settings"):
+                 "entry_grade_settings", "payment_settings", "email_templates",
+                 "automations"):
         assert hasattr(c, attr), attr
 
 
@@ -822,3 +823,128 @@ def test_patch_does_not_follow_redirects():
     with pytest.raises(EnrolHQError, match="x.enrolhq.net.au"):
         http.patch("https://x.enrolhq.com.au/api/v2/extra-frontend-code/", json={})
     assert http.session.kwargs["allow_redirects"] is False
+
+
+def _template(template_id, recipient_type):
+    return {
+        "id": template_id, "name": "Enquiry Parent", "recipient_type": recipient_type,
+        "subject_template": "Thanks", "html_template": "<div>Hi</div>",
+        "attachments": [{"id": "a1", "file": "https://cdn/terms.pdf"}],
+        "signature": None, "is_archived": False,
+    }
+
+
+def _page(rows):
+    return {"count": len(rows), "next": None, "previous": None, "results": rows}
+
+
+def test_email_template_find_returns_every_recipient_variant():
+    from enrolhq.resources.email_templates import EmailTemplatesResource
+    rows = [_template("t1", "PRIMARY_CARER"), _template("t2", "SECONDARY_CARERS")]
+    found = EmailTemplatesResource(_Http(_page(rows)), BASE).find(" enquiry parent ")
+    assert [row["id"] for row in found] == ["t1", "t2"]
+    one = EmailTemplatesResource(_Http(_page(rows)), BASE).find(
+        "Enquiry Parent", recipient_type="SECONDARY_CARERS"
+    )
+    assert [row["id"] for row in one] == ["t2"]
+
+
+def test_email_template_update_fields_keeps_the_rest():
+    from enrolhq.resources.email_templates import EmailTemplatesResource
+    http = _Http(_template("t1", "PRIMARY_CARER"), {})
+    EmailTemplatesResource(http, BASE).update_fields("t1", {"subject_template": "Hello"})
+    method, url, body = http.writes()[0]
+    assert (method, url) == ("PUT", BASE + "email-templates/t1/")
+    assert body["subject_template"] == "Hello"
+    assert body["html_template"] == "<div>Hi</div>"
+    assert body["attachments"] == [{"id": "a1", "file": "https://cdn/terms.pdf"}]
+
+
+def test_email_signature_create_and_update():
+    from enrolhq.resources.email_templates import EmailTemplatesResource
+    http = _Http({}, {})
+    resource = EmailTemplatesResource(http, BASE)
+    resource.create_signature("Registrar", "<div>Sam</div>")
+    resource.update_signature("s1", "Registrar", "<div>Kim</div>")
+    assert http.writes() == [
+        ("POST", BASE + "email-signatures/", {"name": "Registrar", "html_template": "<div>Sam</div>"}),
+        ("PUT", BASE + "email-signatures/s1/", {"name": "Registrar", "html_template": "<div>Kim</div>"}),
+    ]
+
+
+def _automation():
+    return {
+        "id": "f1", "name": "Enquiry follow-up", "email_templates": ["t1"],
+        "trigger": {
+            "id": "g1", "delay_hours": 72, "is_active": False,
+            "trigger_event_codes": ["ENQUIRY_FORM_SUBMITTED"], "cancel_event_codes": [],
+        },
+    }
+
+
+def test_automation_set_active_changes_only_the_switch():
+    from enrolhq.resources.automations import AutomationsResource
+    http = _Http(_automation(), {})
+    AutomationsResource(http, BASE).set_active("f1", True)
+    method, url, body = http.writes()[0]
+    assert (method, url) == ("PUT", BASE + "followups/f1/")
+    assert body["trigger"] == {**_automation()["trigger"], "is_active": True}
+    assert body["email_templates"] == ["t1"]
+
+
+def test_automation_find_and_event_codes():
+    from enrolhq.resources.automations import AutomationsResource
+    http = _Http(_page([_automation()]), {"choices": [["LEAD_SUBMITTED", "Lead Submitted"]]})
+    resource = AutomationsResource(http, BASE)
+    assert resource.find("ENQUIRY FOLLOW-UP")["id"] == "f1"
+    assert resource.event_codes()["choices"] == [["LEAD_SUBMITTED", "Lead Submitted"]]
+    assert http.requests[1][1] == BASE + "followups/system_event_codes/"
+
+
+def test_form_create_starts_as_an_inactive_draft():
+    from enrolhq.resources.forms import FormsResource
+    http = _Http({"id": "f1"})
+    steps = [{"title": "Consent", "name": "consent", "elements": []}]
+    FormsResource(http, BASE).create(
+        "Media Consent", "media-consent", steps, "c1", settings={"is_private": True}
+    )
+    method, url, body = http.writes()[0]
+    assert (method, url) == ("POST", BASE + "forms/staff/")
+    assert (body["title"], body["form_slug"]) == ("Media Consent", "media-consent")
+    assert (body["is_active"], body["is_private"]) == (False, True)
+    assert body["schema"] == {
+        "schema_data": steps, "local_fields_settings": {}, "is_published": False,
+    }
+    assert [row["campus"] for row in body["campus_cms_settings"]] == ["c1"]
+    assert body["campus_cms_settings"][0]["after_submit_settings"]["action"] == "SHOW_CONFIRMATION"
+
+
+def test_form_update_settings_sends_the_steps_back():
+    from enrolhq.resources.forms import FormsResource
+    schema = {"schema_data": [{"name": "consent"}], "is_published": True}
+    http = _Http({"id": "f1", "title": "Old", "allowed_entry_years": [2027], "schema": schema}, {})
+    FormsResource(http, BASE).update_settings("f1", {"title": "New", "allowed_entry_years": [2028]})
+    method, url, body = http.writes()[0]
+    assert (method, url) == ("PUT", BASE + "forms/staff/f1/")
+    assert (body["title"], body["allowed_entry_years"], body["schema"]) == ("New", [2028], schema)
+
+
+def test_ensure_group_reuses_or_adds_after_the_others():
+    from enrolhq.resources.automations import AutomationsResource
+    from enrolhq.resources.email_templates import EmailTemplatesResource
+    groups = [{"id": "g1", "name": "Enquiry", "is_system": True}]
+    http = _Http(_page(groups))
+    assert EmailTemplatesResource(http, BASE).ensure_group(" enquiry ")["id"] == "g1"
+    assert http.writes() == []
+
+    saved = [*groups, {"id": "g2", "name": "Custom"}]
+    http = _Http(_page(groups), saved)
+    assert EmailTemplatesResource(http, BASE).ensure_group("Custom")["id"] == "g2"
+    assert http.writes() == [(
+        "PUT", BASE + "email-template-groups/batch_update/",
+        [{"id": "g1", "name": "Enquiry"}, {"name": "Custom"}],
+    )]
+
+    http = _Http(_page([]), [{"id": "g3", "name": "Reminders"}])
+    assert AutomationsResource(http, BASE).ensure_group("Reminders")["id"] == "g3"
+    assert http.writes()[0][1] == BASE + "followup-groups/batch_update/"

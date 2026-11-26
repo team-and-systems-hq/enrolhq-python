@@ -5,10 +5,12 @@ from .admission_processes import AdmissionProcessesResource
 from .analytics import AnalyticsResource
 from .applications import ApplicationsResource
 from .audit_log import AuditLogResource
+from .automations import AutomationsResource
 from .campuses import CampusesResource
 from .cms_settings import CmsSettingsResource
 from .documents import DocumentsResource
 from .email_log import EmailLogResource
+from .email_templates import EmailTemplatesResource
 from .entry_grade_settings import EntryGradeSettingsResource
 from .event_bookings import EventBookingsResource
 from .event_settings import EventSettingsResource
@@ -30,10 +32,12 @@ __all__ = [
     "AnalyticsResource",
     "ApplicationsResource",
     "AuditLogResource",
+    "AutomationsResource",
     "CampusesResource",
     "CmsSettingsResource",
     "DocumentsResource",
     "EmailLogResource",
+    "EmailTemplatesResource",
     "EntryGradeSettingsResource",
     "EventBookingsResource",
     "EventSettingsResource",

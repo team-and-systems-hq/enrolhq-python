@@ -4,7 +4,12 @@ import os
 from typing import Any, Dict, Iterator, List, Optional
 
 from ..pagination import PaginatedIterator, PaginatedResponse
-from .base import BaseResource
+from .base import BaseResource, deep_merge
+
+DEFAULT_CONFIRMATION_HTML = (
+    "<p>Thank you for completing this form. Please "
+    '<a href="/parent/dashboard/">click here</a> to return to your dashboard.</p>'
+)
 
 #: Element types whose answers are written back onto the student profile
 #: rather than being stored in the submit's ``payload``.
@@ -108,6 +113,96 @@ class FormsResource(BaseResource):
         forms such as the enquiry form are not editable here and return 404.
         """
         return self._get(f"forms/staff/{form_id}/")
+
+    def create(
+        self,
+        title: str,
+        form_slug: str,
+        schema_data: List[Dict[str, Any]],
+        campus_id: str,
+        *,
+        local_fields_settings: Optional[Dict[str, Any]] = None,
+        confirmation_html: str = DEFAULT_CONFIRMATION_HTML,
+        settings: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Create a custom form with its first draft.
+
+        The form starts inactive and unpublished, open to every student, with
+        the settings the dashboard gives a new form. Parents cannot open it
+        until it is published and made active (:meth:`save_schema` with
+        ``publish=True`` and ``settings={"is_active": True}``).
+
+        Args:
+            title: Shown to staff and parents.
+            form_slug: The form's web address, lower-case letters, digits and
+                hyphens, unique in the school.
+            schema_data: The steps, each ``{"title", "name", "elements"}``.
+                The server needs at least one step.
+            campus_id: The campus whose page settings the form starts with,
+                normally ``client.campuses.default()["id"]``.
+            local_fields_settings: Per-form field overrides.
+            confirmation_html: Shown to the parent after submitting.
+            settings: Other top-level settings to override, e.g.
+                ``{"is_private": True}``.
+        """
+        body: Dict[str, Any] = {
+            "title": title,
+            "form_slug": form_slug,
+            "is_active": False,
+            "is_private": False,
+            "is_profile_creation_allowed": False,
+            "is_allowed_to_third_party": False,
+            "is_submitted_form_hidden_from_parent": True,
+            "is_profile_external_id_visible": False,
+            "is_student_code_visible": False,
+            "is_attendance_type_print": False,
+            "is_campus_print": False,
+            "custom_categories_to_print": [],
+            "print_header_html": "",
+            "allowed_campuses": [],
+            "allowed_application_statuses": [],
+            "allowed_entry_grades": [],
+            "allowed_entry_years": [],
+            "allowed_attendance_types": [],
+            "allowed_custom_categories_options": [],
+            "is_all_custom_categories_options_must_present": False,
+            "is_student_speak_other_language": None,
+            "depends_on": [],
+            "payment_settings": None,
+            "campus_cms_settings": [
+                {
+                    "campus": campus_id,
+                    "introductory_html": "",
+                    "after_submit_settings": {
+                        "action": "SHOW_CONFIRMATION",
+                        "confirmation_html": confirmation_html,
+                        "redirect_url": "",
+                        "redirect_next_form": None,
+                    },
+                    "is_strip_logo_enabled": False,
+                    "show_title_in_header_overlay": False,
+                }
+            ],
+            **(settings or {}),
+        }
+        body["schema"] = {
+            "schema_data": schema_data,
+            "local_fields_settings": local_fields_settings or {},
+            "is_published": False,
+        }
+        return self._post("forms/staff/", json=body)
+
+    def update_settings(
+        self, form_id: str, changes: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Change some of a custom form's settings: GET, merge *changes*, PUT.
+
+        The steps are sent back as they are. Lists in *changes*, such as
+        ``allowed_entry_years``, replace the current list.
+        """
+        return self.update_definition(
+            form_id, deep_merge(self.definition(form_id), changes)
+        )
 
     def update_definition(
         self, form_id: str, data: Dict[str, Any]
