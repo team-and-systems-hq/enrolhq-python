@@ -108,7 +108,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 |----------|--------|------------|
 | Applications | `client.applications` | list, get, create, update, count, field_choices, student_applications, iter_student_applications, actions, bulk ops |
 | Leads | `client.leads` | list, get, create, update, references, create_reference |
-| Forms | `client.forms` | list, get, find, definition, save_schema, update_definition, check_local_fields, preview, validate_step, submits, get_submit, answers, consents, iter_answers, export_submits |
+| Forms | `client.forms` | list, get, find, definition, create, save_schema, update_settings, update_definition, check_local_fields, preview, validate_step, submits, get_submit, answers, consents, iter_answers, export_submits |
 | Documents | `client.documents` | list, upload, download, delete |
 | Notes | `client.notes` | list, create |
 | Activity Log (Comms Log) | `client.activity_log` | list, create, delete |
@@ -129,6 +129,8 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Entry grade settings | `client.entry_grade_settings` | get, update, modify_grades |
 | Payment settings | `client.payment_settings` | get, update, update_fields |
 | Admission processes | `client.admission_processes` | list, get (read-only) |
+| Email templates | `client.email_templates` | list, get, find, create, update, update_fields, set_archived, toggle_archive, delete, groups, ensure_group, tags, signatures, get_signature, create_signature, update_signature |
+| Automations | `client.automations` | list, get, find, create, update, update_fields, set_active, delete, groups, ensure_group, event_codes |
 
 ## Comms Log entries and notes
 
@@ -493,6 +495,83 @@ See [`examples/18_school_branding.py`](examples/18_school_branding.py),
 [`19_tours_and_events.py`](examples/19_tours_and_events.py) and
 [`20_region_and_year_levels.py`](examples/20_region_and_year_levels.py).
 
+## Email templates and automations
+
+Templates are Django templates. `client.email_templates.tags()` lists the
+merge tags a school can use, and the server refuses a template it cannot
+render. The same name often exists once per recipient type, so `find`
+returns a list:
+
+```python
+for template in client.email_templates.find("Enquiry Parent"):
+    client.email_templates.update_fields(
+        template["id"],
+        {"subject_template": "Thanks for your enquiry, {{ user_parent.first_name }}"},
+    )
+```
+
+An automation waits for an event, then emails a template, moves the student
+to a status, or both. Create it switched off, check it, then turn it on:
+
+```python
+group = client.email_templates.ensure_group("Custom")
+template = client.email_templates.create({
+    "name": "Enquiry follow-up",
+    "kind": "CUSTOM",
+    "recipient_type": "CARERS",
+    "group": group["id"],
+    "subject_template": "Any questions about {{ school.settings.name }}?",
+    "html_template": "<div>Dear {{ user_parent.first_name }},</div>",
+    "from_email": "",
+    "staff_recipients": [],
+    "staff_reply_to_type": "",
+    "attachments": [],
+    "signature": None,
+    "is_base_render_needed": True,
+    "is_single_email_per_recipient": False,
+})
+automation = client.automations.create({
+    "name": "Enquiry follow-up after 3 days",
+    "group": None,
+    "trigger": {
+        "trigger_event_codes": ["ENQUIRY_FORM_SUBMITTED"],
+        "cancel_event_codes": ["EOI_SUBMITTED"],
+        "delay_hours": 72,
+        "is_active": False,
+    },
+    "email_templates": [template["id"]],
+    "carer_sms_templates": [],
+    "target_application_status": None,
+    "identity_lock_action": "",
+    "custom_categories_options": [],
+    "exclude_application_statuses": [],
+    "allowed_application_statuses": [],
+    "allowed_entry_grades": [],
+    "allowed_entry_years": [],
+    "allowed_custom_categories_options": [],
+    "allowed_attendance_types": [],
+    "allowed_campuses": [],
+})
+client.automations.set_active(automation["id"], True)
+```
+
+- **An active automation emails families by itself.** Turning one on only
+  affects events from then on, and turning it off cancels its pending runs.
+- **Some event codes need an id.** `client.automations.event_codes()` lists
+  the codes; one in its `complex` list is written `CODE:<id>`, with a custom
+  form id, an event kind id, a lead reference id or an interview type id.
+- **Names are not unique**, for templates or automations, so both `find`
+  methods return a list. A template's `recipient_type` cannot change after
+  creation.
+- **System templates are fixed.** Sign-in codes, receipts and offer
+  acceptance links (`is_system`) are sent by EnrolHQ itself and cannot be
+  archived or deleted. Every other template is sent by an automation or by
+  staff, and more of any non-system kind can be created.
+- **Deleting a template takes two steps.** Archive it with `set_archived`,
+  then `delete`. The server refuses both while an automation uses it.
+- **`ensure_group` rewrites the whole list of groups**, because the server
+  has no call that adds one. Do not run it concurrently.
+
 ## Limited-permission API tokens
 
 Any staff user whose role includes **Create API Token** can create an API
@@ -555,10 +634,13 @@ from a school's Word or PDF document. Save the new schema as a draft, check
 it with the staff preview and the no-save step validation, then publish:
 
 ```python
+form = client.forms.create("Media Consent", "media-consent", steps, client.campuses.default()["id"])
+form_id = form["id"]
 assert not client.forms.check_local_fields(overrides)
 client.forms.save_schema(form_id, steps, local_fields_settings=overrides)  # draft
 client.forms.validate_step(form_id, 1, step_one_answers)                  # saves nothing
-client.forms.save_schema(form_id, steps, publish=True)                     # parents see it
+client.forms.save_schema(form_id, steps, publish=True,
+                         settings={"is_active": True})                     # parents see it
 ```
 
 See [docs/custom-forms.md](docs/custom-forms.md) for the schema and element
