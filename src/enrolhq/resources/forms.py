@@ -130,7 +130,10 @@ class FormsResource(BaseResource):
         The form starts inactive and unpublished, open to every student, with
         the settings the dashboard gives a new form. Parents cannot open it
         until it is published and made active (:meth:`save_schema` with
-        ``publish=True`` and ``settings={"is_active": True}``).
+        ``publish=True`` and ``settings={"is_active": True}``). The default
+        confirmation text says "your dashboard"; the dashboard uses the
+        school's own name for it, so pass ``confirmation_html`` for a school
+        that has one.
 
         Args:
             title: Shown to staff and parents.
@@ -198,7 +201,11 @@ class FormsResource(BaseResource):
         """Change some of a custom form's settings: GET, merge *changes*, PUT.
 
         The steps are sent back as they are. Lists in *changes*, such as
-        ``allowed_entry_years``, replace the current list.
+        ``allowed_entry_years``, replace the current list. For
+        ``campus_cms_settings`` start from the rows :meth:`definition`
+        returns and keep each row's ``id``: the server deletes a row that is
+        left out and recreates one sent without its ``id``, which drops that
+        campus's uploaded logo and header image.
         """
         return self.update_definition(
             form_id, deep_merge(self.definition(form_id), changes)

@@ -129,7 +129,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Entry grade settings | `client.entry_grade_settings` | get, update, modify_grades |
 | Payment settings | `client.payment_settings` | get, update, update_fields |
 | Admission processes | `client.admission_processes` | list, get (read-only) |
-| Email templates | `client.email_templates` | list, get, find, create, update, update_fields, toggle_archive, delete, groups, ensure_group, tags, signatures, get_signature, create_signature, update_signature |
+| Email templates | `client.email_templates` | list, get, find, create, update, update_fields, set_archived, toggle_archive, delete, groups, ensure_group, tags, signatures, get_signature, create_signature, update_signature |
 | Automations | `client.automations` | list, get, find, create, update, update_fields, set_active, delete, groups, ensure_group, event_codes |
 
 ## Comms Log entries and notes
@@ -560,10 +560,17 @@ client.automations.set_active(automation["id"], True)
 - **Some event codes need an id.** `client.automations.event_codes()` lists
   the codes; one in its `complex` list is written `CODE:<id>`, with a custom
   form id, an event kind id, a lead reference id or an interview type id.
-- **Template names are not unique**, and `recipient_type` cannot change
-  after creation.
-- **Only `CUSTOM` and `MARKETING` templates can be created or deleted.** The
-  built-in ones can be edited and archived.
+- **Names are not unique**, for templates or automations, so both `find`
+  methods return a list. A template's `recipient_type` cannot change after
+  creation.
+- **System templates are fixed.** Sign-in codes, receipts and offer
+  acceptance links (`is_system`) are sent by EnrolHQ itself and cannot be
+  archived or deleted. Every other template is sent by an automation or by
+  staff, and more of any non-system kind can be created.
+- **Deleting a template takes two steps.** Archive it with `set_archived`,
+  then `delete`. The server refuses both while an automation uses it.
+- **`ensure_group` rewrites the whole list of groups**, because the server
+  has no call that adds one. Do not run it concurrently.
 
 ## Limited-permission API tokens
 
@@ -632,7 +639,8 @@ form_id = form["id"]
 assert not client.forms.check_local_fields(overrides)
 client.forms.save_schema(form_id, steps, local_fields_settings=overrides)  # draft
 client.forms.validate_step(form_id, 1, step_one_answers)                  # saves nothing
-client.forms.save_schema(form_id, steps, publish=True)                     # parents see it
+client.forms.save_schema(form_id, steps, publish=True,
+                         settings={"is_active": True})                     # parents see it
 ```
 
 See [docs/custom-forms.md](docs/custom-forms.md) for the schema and element

@@ -22,10 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Email templates** (`client.email_templates`, `email-templates/`): `list`,
   `get`, `find` (names repeat per recipient type, so it returns a list),
-  `create`, `update`, `update_fields`, `toggle_archive`, `delete`, `groups`,
-  `ensure_group` (a new school has no group for its own templates), `tags` (the merge tags a template may use) and the signature methods
+  `create`, `update`, `update_fields`, `set_archived`, `toggle_archive`,
+  `delete`, `groups`, `ensure_group` (a new school has no group for its own
+  templates), `tags` (the merge tags a template may use) and the signature methods
   `signatures`, `get_signature`, `create_signature`, `update_signature`.
-- **Automations** (`client.automations`, `followups/`): `list`, `get`, `find`,
+- **Automations** (`client.automations`, `followups/`): `list`, `get`, `find`
+  (a list too: names are not unique),
   `create`, `update`, `update_fields`, `set_active`, `delete`, `groups`,
   `ensure_group` and `event_codes`. README section *Email templates and automations* covers
   both.

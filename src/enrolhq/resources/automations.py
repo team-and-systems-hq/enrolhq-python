@@ -64,13 +64,17 @@ class AutomationsResource(BaseResource):
         """Get one automation."""
         return self._get(f"followups/{automation_id}/")
 
-    def find(self, name: str) -> Optional[Dict[str, Any]]:
-        """Return the first automation with this name (case-insensitive)."""
+    def find(self, name: str) -> List[Dict[str, Any]]:
+        """Return the automations with this name (case-insensitive).
+
+        Names are not unique, so check for exactly one before changing it.
+        """
         needle = name.strip().lower()
-        for row in self.list(page_size=1000):
-            if (row.get("name") or "").strip().lower() == needle:
-                return row
-        return None
+        return [
+            row
+            for row in self.list(page_size=1000)
+            if (row.get("name") or "").strip().lower() == needle
+        ]
 
     def create(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create an automation. Every key in the class example is required."""
@@ -103,7 +107,13 @@ class AutomationsResource(BaseResource):
         return list(self._list("followup-groups/", page_size=1000))
 
     def ensure_group(self, name: str) -> Dict[str, Any]:
-        """Return the group with this name, adding it after the others if missing."""
+        """Return the group with this name, adding it after the others if missing.
+
+        The server only takes the whole list of groups, so adding one sends
+        every group back. Do not run this concurrently, or while someone is
+        editing groups in the dashboard: the later write replaces the earlier
+        one and removes an empty group it did not know about.
+        """
         groups = self.groups()
         wanted = name.strip()
         for group in groups:

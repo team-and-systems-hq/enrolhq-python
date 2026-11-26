@@ -860,6 +860,28 @@ def test_email_template_update_fields_keeps_the_rest():
     assert body["attachments"] == [{"id": "a1", "file": "https://cdn/terms.pdf"}]
 
 
+def test_email_template_bodies_are_only_asked_for_when_wanted():
+    from enrolhq.resources.email_templates import EmailTemplatesResource
+    http = _Http(_page([]), _page([]))
+    resource = EmailTemplatesResource(http, BASE)
+    list(resource.list(return_html_template=False, is_archived=True))
+    list(resource.list(return_html_template=True))
+    assert "return_html_template" not in http.requests[0][2]
+    assert http.requests[0][2]["is_archived"] is True
+    assert http.requests[1][2]["return_html_template"] == "true"
+
+
+def test_email_template_set_archived_only_flips_when_needed():
+    from enrolhq.resources.email_templates import EmailTemplatesResource
+    archived = {**_template("t1", "CARERS"), "is_archived": True}
+    http = _Http(archived, _template("t1", "CARERS"), archived)
+    resource = EmailTemplatesResource(http, BASE)
+    assert resource.set_archived("t1", True) == archived
+    assert http.writes() == []
+    assert resource.set_archived("t1", True) == archived
+    assert http.writes() == [("POST", BASE + "email-templates/t1/toggle_archive/", None)]
+
+
 def test_email_signature_create_and_update():
     from enrolhq.resources.email_templates import EmailTemplatesResource
     http = _Http({}, {})
@@ -896,7 +918,7 @@ def test_automation_find_and_event_codes():
     from enrolhq.resources.automations import AutomationsResource
     http = _Http(_page([_automation()]), {"choices": [["LEAD_SUBMITTED", "Lead Submitted"]]})
     resource = AutomationsResource(http, BASE)
-    assert resource.find("ENQUIRY FOLLOW-UP")["id"] == "f1"
+    assert [row["id"] for row in resource.find("ENQUIRY FOLLOW-UP")] == ["f1"]
     assert resource.event_codes()["choices"] == [["LEAD_SUBMITTED", "Lead Submitted"]]
     assert http.requests[1][1] == BASE + "followups/system_event_codes/"
 
