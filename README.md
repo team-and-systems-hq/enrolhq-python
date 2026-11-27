@@ -132,7 +132,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Email templates | `client.email_templates` | list, get, find, create, update, update_fields, set_archived, toggle_archive, delete, groups, ensure_group, tags, signatures, get_signature, create_signature, update_signature |
 | Automations | `client.automations` | list, get, find, create, update, update_fields, set_active, delete, groups, ensure_group, event_codes |
 | Enrolment journey stages | `client.application_status_settings` | list, update, update_fields |
-| Interview set-up | `client.interviews` | get_settings, update_settings, update_settings_fields, types, ensure_types, interviewers, get_interviewer, find_interviewers, create_interviewer, update_interviewer, delete_interviewer, locations, create_location, update_location, ensure_location, availabilities, get_availability, create_availability, update_availability, delete_availability |
+| Interview set-up | `client.interviews` | get_settings, update_settings, update_settings_fields, types, ensure_types, interviewers, get_interviewer, find_interviewers, create_interviewer, update_interviewer, delete_interviewer, locations, create_location, update_location, ensure_location, availabilities, get_availability, create_availability, update_availability, delete_availability, question_sections, get_question_section, create_question_section, update_question_section, delete_question_section, get_pdf_settings, update_pdf_settings, student_interviews, assign, unassign, delete_interview, open_times, book, cancel_booking |
 
 ## Comms Log entries and notes
 
@@ -623,6 +623,41 @@ client.interviews.create_availability(
   Check `availabilities(interviewer=..., date=...)` first.
 - **Locations cannot be deleted through the API**, and deleting an interviewer
   needs another interviewer to take over their interviews.
+
+The interview review sheet has its own questions and layout:
+
+```python
+client.interviews.create_question_section(
+    "Family", [{"label": "Siblings at the school"}, {"label": "Hopes for your child"}]
+)
+client.interviews.update_pdf_settings(
+    {"title": "Enrolment Interview", "is_medical_data_visible": False}
+)
+```
+
+Booking a student's interview as staff takes three calls: give the student an
+interview, list the open slots, book one:
+
+```python
+kind = client.interviews.types()[0]
+client.interviews.assign(application_id, kind["id"])
+interview = client.interviews.student_interviews(application_id)[-1]
+slot = next(s for s in client.interviews.open_times(interview["id"]) if not s["is_booked"])
+booking = client.interviews.book(application_id, slot["token"])
+client.interviews.cancel_booking(application_id, booking["id"])
+```
+
+- **`assign` fires *Interview Assigned*** and `cancel_booking` fires *Interview
+  Cancelled by Staff*, so an active automation on either event emails the
+  family. A staff booking fires nothing: the family is told only if
+  `email_templates_to_send` is passed. Reminder automations still run.
+- **There is no call that moves a booking.** Cancel it and book another slot.
+  While an interview is booked, `open_times` only lists other interviewers'
+  slots on that date, and booking one adds a second interviewer.
+- **`unassign` keeps an interview that was ever booked**, even after the
+  booking was cancelled. `delete_interview` removes that one.
+- **Question ids do not last.** The server recreates a section's questions
+  each time the section is saved.
 
 ## Limited-permission API tokens
 

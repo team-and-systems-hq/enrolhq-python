@@ -1102,3 +1102,77 @@ def test_availability_create_sends_time_objects_and_filters_pass_through():
     assert http.requests[1][2]["interviewer"] == "i1"
     assert http.requests[1][2]["date_gte"] == "2027-03-01"
     assert http.requests[2][:2] == ("DELETE", BASE + "interview/availabilities/v1/")
+
+
+def test_question_sections_number_their_questions_in_order():
+    from enrolhq.resources.interviews import InterviewsResource
+    current = {
+        "id": "q1", "position": 2, "label": "Comments", "allowed_entry_grades": [7],
+        "questions": [{"id": "a", "position": 1, "label": "Academic", "lines_for_answer": 2, "is_underline_shown": False}],
+    }
+    http = _Http({"id": "q2"}, current, {}, None)
+    resource = InterviewsResource(http, BASE)
+    resource.create_question_section("Family", [{"label": "Siblings"}], allowed_campuses=["c1"])
+    resource.update_question_section(
+        "q1", {"position": 1, "questions": [{"label": "Pastoral"}, current["questions"][0]]}
+    )
+    resource.delete_question_section("q1")
+    created, updated, deleted = http.writes()
+    assert created == ("POST", BASE + "interview/questions/sections/", {
+        "label": "Family", "position": None,
+        "questions": [{"lines_for_answer": 4, "is_underline_shown": True, "label": "Siblings", "position": 1}],
+        "allowed_entry_grades": [], "allowed_campuses": ["c1"],
+        "allowed_attendance_types": [], "allowed_custom_categories_options": [],
+    })
+    assert updated[:2] == ("PUT", BASE + "interview/questions/sections/q1/")
+    assert (updated[2]["position"], updated[2]["allowed_entry_grades"]) == (1, [7])
+    assert updated[2]["questions"] == [
+        {"lines_for_answer": 4, "is_underline_shown": True, "label": "Pastoral", "position": 1},
+        {"id": "a", "position": 2, "label": "Academic", "lines_for_answer": 2, "is_underline_shown": False},
+    ]
+    assert deleted[:2] == ("DELETE", BASE + "interview/questions/sections/q1/")
+
+
+def test_pdf_settings_update_keeps_the_other_flags():
+    from enrolhq.resources.interviews import InterviewsResource
+    current = {
+        "pdf_settings": {"title": "Interview Review", "is_avatar_visible": True, "is_medical_data_visible": True},
+        "default_pdf_settings": {"title": "Interview Review"},
+    }
+    http = _Http(current, {})
+    InterviewsResource(http, BASE).update_pdf_settings({"is_medical_data_visible": False})
+    assert http.writes() == [("PUT", BASE + "interview/pdf-settings/", {"pdf_settings": {
+        "title": "Interview Review", "is_avatar_visible": True, "is_medical_data_visible": False,
+    }})]
+
+
+def test_a_students_interview_is_assigned_booked_and_cancelled():
+    from enrolhq.resources.applications import ApplicationsResource
+    from enrolhq.resources.interviews import InterviewsResource
+    interview = {"id": "n1", "interview_type": "y1", "booking": None}
+    slots = [[{"date": "2027-03-02", "token": "t1"}], [{"date": "2027-03-03", "token": "t2"}]]
+    http = _Http(
+        _page([{"id": "p1", "interviews": [interview]}]), _page([]), {}, {}, slots, {}, {}, {}, None, {},
+    )
+    resource = InterviewsResource(http, BASE)
+    assert resource.student_interviews("p1") == [interview]
+    assert resource.student_interviews("p2") == []
+    resource.assign("p1", "y1", interviewer="i1")
+    resource.unassign("p1", "y1", including_with_interviewer=False)
+    assert [slot["token"] for slot in resource.open_times("n1")] == ["t1", "t2"]
+    resource.book("p1", "t2")
+    resource.book("p1", "t1", email_templates_to_send=["e1"])
+    resource.cancel_booking("p1", "b1")
+    resource.delete_interview("n1")
+    ApplicationsResource(http, BASE).cancel_interview("p1", "b2")
+    assert http.requests[0][1:] == (BASE + "interview/assigned-profiles/", {"id": "p1", "page": 1, "page_size": 10})
+    assert http.requests[4][1] == BASE + "interview/interviews/n1/interview_intervals/"
+    assert http.writes() == [
+        ("POST", BASE + "applications-list/bulk_add_interview/", {"interview_type": "y1", "interviewer": "i1"}),
+        ("POST", BASE + "applications-list/bulk_remove_interview/", {"interview_type": "y1", "including_with_interviewer": False}),
+        ("POST", BASE + "applications/p1/book_interview/", {"token": "t2"}),
+        ("POST", BASE + "applications/p1/book_interview/", {"token": "t1", "email_templates_to_send": ["e1"]}),
+        ("POST", BASE + "applications/p1/cancel_interview_booking/", {"booking": "b1"}),
+        ("DELETE", BASE + "interview/interviews/n1/", None),
+        ("POST", BASE + "applications/p1/cancel_interview_booking/", {"booking": "b2"}),
+    ]

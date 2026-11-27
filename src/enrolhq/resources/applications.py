@@ -338,15 +338,28 @@ class ApplicationsResource(BaseResource):
     def book_interview(
         self, application_id: str, data: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """Book an interview for the application."""
+        """Book an interview for the application.
+
+        *data* is ``{"token": ...}`` with a slot token from
+        ``client.interviews.open_times()``; ``client.interviews.book()``
+        builds it.
+        """
         return self._post(
             f"applications/{application_id}/book_interview/", json=data
         )
 
-    def cancel_interview(self, application_id: str) -> Optional[Dict[str, Any]]:
-        """Cancel an interview booking."""
+    def cancel_interview(
+        self, application_id: str, booking: str
+    ) -> Optional[Dict[str, Any]]:
+        """Cancel an interview booking.
+
+        *booking* is the booking's id, from
+        ``client.interviews.student_interviews()``. The server answers 400
+        without it.
+        """
         return self._post(
-            f"applications/{application_id}/cancel_interview_booking/"
+            f"applications/{application_id}/cancel_interview_booking/",
+            json={"booking": booking},
         )
 
     def send_enrolment_invite(self, application_id: str) -> Optional[Dict[str, Any]]:

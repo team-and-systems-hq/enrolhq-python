@@ -22,6 +22,13 @@ class InterviewsResource(BaseResource):
       date when one interviewer can interview. EnrolHQ cuts the block into
       slots of ``interview_duration_minutes``, and parents (or staff) book a
       slot.
+    * **Questions** (``interview/questions/sections/``): the sections and
+      questions printed on the interview review sheet.
+    * **PDF settings** (``interview/pdf-settings/``): the title of that sheet
+      and which parts of the student's record it shows.
+    * **A student's interviews**: :meth:`assign` gives a student an interview
+      of one type, :meth:`open_times` lists the slots it can be booked into,
+      and :meth:`book` and :meth:`cancel_booking` book and cancel as staff.
 
     Reading needs any staff user. Writing needs the matching interview
     permissions (Registrar role, school Admin or superuser).
@@ -269,6 +276,221 @@ class InterviewsResource(BaseResource):
     def delete_availability(self, availability_id: str) -> None:
         """Delete an availability block. 400 if a slot in it is booked."""
         self._delete(f"interview/availabilities/{availability_id}/")
+
+    def question_sections(self) -> List[Dict[str, Any]]:
+        """List the question sections of the interview review sheet, in order.
+
+        Each is ``{id, position, label, questions, allowed_entry_grades,
+        allowed_campuses, allowed_attendance_types,
+        allowed_custom_categories_options}``. A question is ``{id, position,
+        label, lines_for_answer, is_underline_shown}``. The ``allowed_*``
+        lists narrow which students a section is printed for; empty means
+        every student.
+        """
+        return list(self._list("interview/questions/sections/", page_size=1000))
+
+    def get_question_section(self, section_id: str) -> Dict[str, Any]:
+        """Get one question section."""
+        return self._get(f"interview/questions/sections/{section_id}/")
+
+    def create_question_section(
+        self,
+        label: str,
+        questions: List[Dict[str, Any]],
+        *,
+        allowed_entry_grades: Optional[List[int]] = None,
+        allowed_campuses: Optional[List[str]] = None,
+        allowed_attendance_types: Optional[List[str]] = None,
+        allowed_custom_categories_options: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Add a question section after the existing ones.
+
+        Each question needs a ``label``; ``lines_for_answer`` (0 to 10,
+        default 4) and ``is_underline_shown`` (default true) are filled in.
+        Questions are printed in the order given.
+        """
+        return self._post(
+            "interview/questions/sections/",
+            json={
+                "label": label,
+                "position": None,
+                "questions": _questions(questions),
+                "allowed_entry_grades": list(allowed_entry_grades or []),
+                "allowed_campuses": list(allowed_campuses or []),
+                "allowed_attendance_types": list(allowed_attendance_types or []),
+                "allowed_custom_categories_options": list(
+                    allowed_custom_categories_options or []
+                ),
+            },
+        )
+
+    def update_question_section(
+        self, section_id: str, changes: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Change a question section: GET, merge *changes*, PUT.
+
+        ``questions`` in *changes* replaces the section's questions, in the
+        order given. The server recreates them on every save, so question
+        ids do not last. ``position`` (from 1) moves the section among the
+        others.
+        """
+        current = self.get_question_section(section_id)
+        merged = deep_merge(current, changes)
+        merged["questions"] = _questions(merged.get("questions") or [])
+        return self._put(f"interview/questions/sections/{section_id}/", json=merged)
+
+    def delete_question_section(self, section_id: str) -> None:
+        """Delete a question section and its questions."""
+        self._delete(f"interview/questions/sections/{section_id}/")
+
+    def get_pdf_settings(self) -> Dict[str, Any]:
+        """Get the interview review sheet settings.
+
+        ``pdf_settings`` holds ``title`` and one ``is_..._visible`` flag per
+        part of the sheet; ``default_pdf_settings`` holds EnrolHQ's defaults
+        for the same keys.
+        """
+        return self._get("interview/pdf-settings/")
+
+    def update_pdf_settings(self, changes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Change some review sheet settings, keeping the rest.
+
+        For example ``{"title": "Enrolment Interview",
+        "is_medical_data_visible": False}``.
+        """
+        current = self.get_pdf_settings().get("pdf_settings") or {}
+        return self._put(
+            "interview/pdf-settings/",
+            json={"pdf_settings": deep_merge(current, changes)},
+        )
+
+    def student_interviews(self, application_id: str) -> List[Dict[str, Any]]:
+        """List one student's interviews, oldest first.
+
+        Each is ``{id, interview_type, interviewer, booking, is_booked,
+        completed_at, notes, ...}``. ``booking`` is ``None`` or ``{id, date,
+        start_time, end_time, location, interviewer, can_be_cancelled, ...}``
+        and ``is_booked`` is true while that booking is still ahead. A
+        student who was never given an interview has an empty list.
+        """
+        rows = self._list(
+            "interview/assigned-profiles/", params={"id": application_id}, page_size=10
+        )
+        for row in rows:
+            if str(row.get("id")) == str(application_id):
+                return row.get("interviews") or []
+        return []
+
+    def assign(
+        self,
+        application_id: str,
+        interview_type: str,
+        *,
+        interviewer: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Give a student an interview of this type, to be booked later.
+
+        Nothing happens if the student already has an unfinished interview
+        of the type. A new one fires the *Interview Assigned* event, so an
+        active automation on that event emails the family. ``interviewer``
+        (an id) limits the booking to that interviewer's availability.
+        """
+        return self._post(
+            "applications-list/bulk_add_interview/",
+            json={"interview_type": interview_type, "interviewer": interviewer},
+            params={"id": application_id},
+        )
+
+    def unassign(
+        self,
+        application_id: str,
+        interview_type: str,
+        *,
+        including_with_interviewer: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """Remove a student's unfinished interview of this type.
+
+        An interview that has ever been booked, even if the booking was
+        cancelled, is kept: use :meth:`delete_interview` for that. With
+        ``including_with_interviewer`` false an interview that already has
+        an interviewer is kept too.
+        """
+        return self._post(
+            "applications-list/bulk_remove_interview/",
+            json={
+                "interview_type": interview_type,
+                "including_with_interviewer": including_with_interviewer,
+            },
+            params={"id": application_id},
+        )
+
+    def delete_interview(self, interview_id: str) -> None:
+        """Delete one interview and its cancelled bookings.
+
+        400 if the interview has an interviewer or a booking that is not
+        cancelled.
+        """
+        self._delete(f"interview/interviews/{interview_id}/")
+
+    def open_times(self, interview_id: str) -> List[Dict[str, Any]]:
+        """List the slots an interview can be booked into, as staff see them.
+
+        Each slot is ``{date, start_time, end_time, interviewer, location,
+        interviewer_availability, is_booked, token}``. Pass the ``token`` of
+        a slot that is not booked to :meth:`book`. Staff are offered every
+        matching slot from now on, whatever the parent booking limits are.
+
+        While the interview has a booking, only other interviewers' slots on
+        the booked date are listed: booking one adds that interviewer to the
+        same interview. To see every slot again, cancel the booking first.
+        """
+        days = self._get(f"interview/interviews/{interview_id}/interview_intervals/")
+        return [slot for day in days or [] for slot in day]
+
+    def book(
+        self,
+        application_id: str,
+        token: str,
+        *,
+        email_templates_to_send: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Book an interview slot for a student, as staff.
+
+        *token* comes from :meth:`open_times`. A staff booking does not fire
+        the *Interview Booked* event, so the family is only told if
+        ``email_templates_to_send`` (template ids) is given. Reminder
+        automations still run for the booking.
+        """
+        body: Dict[str, Any] = {"token": token}
+        if email_templates_to_send:
+            body["email_templates_to_send"] = list(email_templates_to_send)
+        return self._post(f"applications/{application_id}/book_interview/", json=body)
+
+    def cancel_booking(
+        self, application_id: str, booking_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Cancel a student's interview booking and reopen its slot.
+
+        Fires the *Interview Cancelled by Staff* event, so an active
+        automation on that event emails the family. There is no call that
+        moves a booking: cancel it, then :meth:`book` another slot.
+        """
+        return self._post(
+            f"applications/{application_id}/cancel_interview_booking/",
+            json={"booking": booking_id},
+        )
+
+
+def _questions(questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "lines_for_answer": 4,
+            "is_underline_shown": True,
+            **question,
+            "position": position,
+        }
+        for position, question in enumerate(questions, 1)
+    ]
 
 
 def _location(location_id: Optional[str]) -> Optional[Dict[str, str]]:
