@@ -3,6 +3,7 @@
 from .activity_log import ActivityLogResource
 from .admission_processes import AdmissionProcessesResource
 from .analytics import AnalyticsResource
+from .application_status_settings import ApplicationStatusSettingsResource
 from .applications import ApplicationsResource
 from .audit_log import AuditLogResource
 from .automations import AutomationsResource
@@ -16,6 +17,7 @@ from .event_bookings import EventBookingsResource
 from .event_settings import EventSettingsResource
 from .events import EventsResource
 from .forms import FormsResource
+from .interviews import InterviewsResource
 from .leads import LeadsResource
 from .look_and_feel import LookAndFeelResource
 from .metafields import MetafieldsResource
@@ -30,6 +32,7 @@ __all__ = [
     "ActivityLogResource",
     "AdmissionProcessesResource",
     "AnalyticsResource",
+    "ApplicationStatusSettingsResource",
     "ApplicationsResource",
     "AuditLogResource",
     "AutomationsResource",
@@ -43,6 +46,7 @@ __all__ = [
     "EventSettingsResource",
     "EventsResource",
     "FormsResource",
+    "InterviewsResource",
     "LeadsResource",
     "LookAndFeelResource",
     "MetafieldsResource",

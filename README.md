@@ -131,6 +131,8 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Admission processes | `client.admission_processes` | list, get (read-only) |
 | Email templates | `client.email_templates` | list, get, find, create, update, update_fields, set_archived, toggle_archive, delete, groups, ensure_group, tags, signatures, get_signature, create_signature, update_signature |
 | Automations | `client.automations` | list, get, find, create, update, update_fields, set_active, delete, groups, ensure_group, event_codes |
+| Enrolment journey stages | `client.application_status_settings` | list, update, update_fields |
+| Interview set-up | `client.interviews` | get_settings, update_settings, update_settings_fields, types, ensure_types, interviewers, get_interviewer, find_interviewers, create_interviewer, update_interviewer, delete_interviewer, locations, create_location, update_location, ensure_location, availabilities, get_availability, create_availability, update_availability, delete_availability |
 
 ## Comms Log entries and notes
 
@@ -571,6 +573,56 @@ client.automations.set_active(automation["id"], True)
   then `delete`. The server refuses both while an automation uses it.
 - **`ensure_group` rewrites the whole list of groups**, because the server
   has no call that adds one. Do not run it concurrently.
+
+## Enrolment journey stages and interviews
+
+The journey stages are the school's application statuses, in order. Change a
+label, switch a stage on or off, show it to parents, or reorder the list:
+
+```python
+client.application_status_settings.update_fields(
+    {9: {"status_label": "Waiting Pool", "is_parent_dashboard_stage_visible": True}},
+    order=[13, 12],
+)
+```
+
+Interview set-up goes settings, then a location and an interviewer, then
+availability:
+
+```python
+client.interviews.update_settings_fields({"interview_duration_minutes": 45})
+kind = client.interviews.ensure_types(["Principal interview"])[-1]
+room = client.interviews.ensure_location("Principal's office")
+person = client.interviews.create_interviewer(
+    "Dr Kim Tan", "principal@example.edu.au", default_location=room["id"]
+)
+client.interviews.create_availability(
+    interviewer=person["id"],
+    location=room["id"],
+    date="2027-03-02",
+    start_time="09:00",
+    end_time="12:00",
+    types=[kind["id"]],
+    interview_duration_minutes=45,
+    parents_interview_duration=40,
+)
+```
+
+- **Stages are sent as a whole list.** `update_fields` reads the list, applies
+  the changes and sends it back. `order` rearranges only the stages it names,
+  among the places they hold now.
+- **Only some stages can be switched off** (`is_status_enabled_editable`). The
+  server keeps the current value for the rest without an error.
+- **A stage is referred to by number everywhere else**, so renaming one does
+  not break an automation, an email or a form's audience.
+- **An availability block becomes bookable slots as soon as it is created.**
+  Only its types, meeting link, instructions and the parents' part of the
+  interview can change afterwards; to move a block, delete it and create
+  another. A block with a booked slot cannot be deleted.
+- **The server does not stop two blocks overlapping** for one interviewer.
+  Check `availabilities(interviewer=..., date=...)` first.
+- **Locations cannot be deleted through the API**, and deleting an interviewer
+  needs another interviewer to take over their interviews.
 
 ## Limited-permission API tokens
 

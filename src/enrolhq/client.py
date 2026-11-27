@@ -9,6 +9,7 @@ from .resources import (
     ActivityLogResource,
     AdmissionProcessesResource,
     AnalyticsResource,
+    ApplicationStatusSettingsResource,
     ApplicationsResource,
     AuditLogResource,
     AutomationsResource,
@@ -22,6 +23,7 @@ from .resources import (
     EventSettingsResource,
     EventsResource,
     FormsResource,
+    InterviewsResource,
     LeadsResource,
     LookAndFeelResource,
     MetafieldsResource,
@@ -152,6 +154,10 @@ class EnrolHQClient:
         )
         self.email_templates = EmailTemplatesResource(self._http, self.base_url)
         self.automations = AutomationsResource(self._http, self.base_url)
+        self.application_status_settings = ApplicationStatusSettingsResource(
+            self._http, self.base_url
+        )
+        self.interviews = InterviewsResource(self._http, self.base_url)
 
     def __repr__(self) -> str:
         return f"EnrolHQClient(base_url={self.base_url!r})"

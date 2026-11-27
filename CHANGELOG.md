@@ -31,6 +31,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `create`, `update`, `update_fields`, `set_active`, `delete`, `groups`,
   `ensure_group` and `event_codes`. README section *Email templates and automations* covers
   both.
+- **Enrolment journey stages** (`client.application_status_settings`,
+  `application-status-settings/`): `list`, `update` and `update_fields`, which
+  renames stages, switches them on or off, shows them to parents and reorders
+  them. `client.reference_data.application_status_settings()` still reads them.
+- **Interview set-up** (`client.interviews`): the settings and interview types
+  (`get_settings`, `update_settings`, `update_settings_fields`, `types`,
+  `ensure_types`), interviewers (`interviewers`, `get_interviewer`,
+  `find_interviewers`, `create_interviewer`, `update_interviewer`,
+  `delete_interviewer`), locations (`locations`, `create_location`,
+  `update_location`, `ensure_location`) and availability (`availabilities`,
+  `get_availability`, `create_availability`, `update_availability`,
+  `delete_availability`). README section *Enrolment journey stages and
+  interviews* covers both.
 - `client.forms.create(title, form_slug, schema_data, campus_id)`: a new
   custom form with its first draft, inactive and unpublished, with the
   settings the dashboard gives a new form.
