@@ -35,9 +35,10 @@ class ApplicationStatusSettingsResource(BaseResource):
     value for the others. Emails, automations and forms refer to a stage by
     its ``application_status`` number, so renaming one does not break them.
 
-    The server only takes the whole list, in the order wanted. Reading needs
-    any staff user, writing needs *View/Edit Enrolment Journey Stages*
-    (school Admin or superuser).
+    The server only takes the whole list, in the order wanted. Reading and
+    writing both need *View/Edit Enrolment Journey Stages* (school Admin or
+    superuser); ``client.reference_data.application_status_settings()`` is
+    the same endpoint.
     """
 
     def list(self) -> List[Dict[str, Any]]:
@@ -68,7 +69,17 @@ class ApplicationStatusSettingsResource(BaseResource):
         Those stages are rearranged among the places they hold now and every
         other stage stays where it is, so ``order=[12, 13]`` puts stage 12
         ahead of stage 13 without moving anything else.
+
+        Raises ``ValueError`` for an unknown status or a key that cannot be
+        changed, before anything is sent.
         """
+        for fields in (changes or {}).values():
+            unknown_keys = sorted(set(fields) - set(_WRITABLE[1:]))
+            if unknown_keys:
+                raise ValueError(
+                    f"Cannot change {unknown_keys[0]!r}. "
+                    f"Keys: {', '.join(_WRITABLE[1:])}"
+                )
         rows = self.list()
         known = {row["application_status"] for row in rows}
         wanted = list(order or [])

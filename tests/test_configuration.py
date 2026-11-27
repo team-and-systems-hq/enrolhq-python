@@ -1001,7 +1001,12 @@ def test_journey_stages_update_fields_changes_and_reorders():
 
 @pytest.mark.parametrize(
     "changes, order, match",
-    [({99: {}}, None, "Unknown application status"), (None, [9, 9], "twice")],
+    [
+        ({99: {}}, None, "Unknown application status"),
+        (None, [9, 9], "twice"),
+        ({9: {"is_parent_dashboard_visible": True}}, None, "Cannot change 'is_parent_dashboard_visible'"),
+        ({9: {"application_status": 10}}, None, "Cannot change 'application_status'"),
+    ],
 )
 def test_journey_stages_update_fields_rejects_bad_input(changes, order, match):
     from enrolhq.resources.application_status_settings import (
@@ -1033,10 +1038,18 @@ def test_interview_settings_fields_and_ensure_types():
     assert InterviewsResource(http, BASE).ensure_types([" interview "]) == body["interview_types"]
     assert http.writes() == []
 
-    saved = {"interview_types": [{"id": "y1", "name": "Interview"}, {"id": "y2", "name": "Tour"}]}
+    saved = {"interview_types": [
+        {"id": "y3", "name": "Assessment"}, {"id": "y1", "name": "Interview"}, {"id": "y2", "name": "Tour"},
+    ]}
     http = _Http(_interview_settings(), saved)
-    assert InterviewsResource(http, BASE).ensure_types(["Tour", "tour"])[-1]["id"] == "y2"
-    assert http.writes()[0][2]["interview_types"][1:] == [{"name": "Tour"}]
+    found = InterviewsResource(http, BASE).ensure_types(["Tour", "tour", "Assessment", "INTERVIEW"])
+    assert [row["id"] for row in found] == ["y2", "y2", "y3", "y1"]
+    assert http.writes()[0][2]["interview_types"][1:] == [{"name": "Tour"}, {"name": "Assessment"}]
+
+    http = _Http()
+    with pytest.raises(TypeError, match="list of names"):
+        InterviewsResource(http, BASE).ensure_types("Tour")
+    assert http.requests == []
 
 
 def test_interviewer_create_update_and_delete():
@@ -1087,7 +1100,7 @@ def test_availability_create_sends_time_objects_and_filters_pass_through():
     http = _Http({"id": "v1"}, _page([]), None)
     resource = InterviewsResource(http, BASE)
     resource.create_availability(
-        interviewer="i1", location="r1", date="2027-03-02", start_time="9:00",
+        interviewer="i1", location="r1", date=dt.date(2027, 3, 2), start_time="9:00",
         end_time=dt.time(12, 30), types=["y1"], interview_duration_minutes=30,
         parents_interview_duration=25,
     )
@@ -1155,7 +1168,7 @@ def test_a_students_interview_is_assigned_booked_and_cancelled():
     interview = {"id": "n1", "interview_type": "y1", "booking": None}
     slots = [[{"date": "2027-03-02", "token": "t1"}], [{"date": "2027-03-03", "token": "t2"}]]
     http = _Http(
-        _page([{"id": "p1", "interviews": [interview]}]), _page([]), {}, {}, slots, {}, {}, {}, None, {},
+        _page([{"id": "p1", "interviews": [interview]}]), _page([]), {}, {}, slots, {}, {}, {}, {}, {}, None, {},
     )
     resource = InterviewsResource(http, BASE)
     assert resource.student_interviews("p1") == [interview]
@@ -1166,7 +1179,11 @@ def test_a_students_interview_is_assigned_booked_and_cancelled():
     resource.book("p1", "t2")
     resource.book("p1", "t1", email_templates_to_send=["e1"])
     resource.cancel_booking("p1", "b1")
+    resource.assign_interviewer("n1", "i2")
+    resource.unassign_interviewer("n1")
     resource.delete_interview("n1")
+    with pytest.raises(ValueError, match="application_id is required"):
+        resource.student_interviews("")
     ApplicationsResource(http, BASE).cancel_interview("p1", "b2")
     assert http.requests[0][1:] == (BASE + "interview/assigned-profiles/", {"id": "p1", "page": 1, "page_size": 10})
     assert http.requests[4][1] == BASE + "interview/interviews/n1/interview_intervals/"
@@ -1176,6 +1193,8 @@ def test_a_students_interview_is_assigned_booked_and_cancelled():
         ("POST", BASE + "applications/p1/book_interview/", {"token": "t2"}),
         ("POST", BASE + "applications/p1/book_interview/", {"token": "t1", "email_templates_to_send": ["e1"]}),
         ("POST", BASE + "applications/p1/cancel_interview_booking/", {"booking": "b1"}),
+        ("POST", BASE + "interview/interviews/n1/assign_interviewer/", {"interviewer": "i2"}),
+        ("POST", BASE + "interview/interviews/n1/unassign_interviewer/", None),
         ("DELETE", BASE + "interview/interviews/n1/", None),
         ("POST", BASE + "applications/p1/cancel_interview_booking/", {"booking": "b2"}),
     ]

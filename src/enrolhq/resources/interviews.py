@@ -1,6 +1,7 @@
 """Interview set-up: settings, types, interviewers, locations and availability."""
 
-from typing import Any, Dict, List, Optional
+import datetime as dt
+from typing import Any, Dict, List, Optional, Union
 
 from ..pagination import PaginatedIterator
 from .base import BaseResource, deep_merge
@@ -10,8 +11,8 @@ from .events import TimeLike, json_time
 class InterviewsResource(BaseResource):
     """Interview set-up (the *Interviews* menu in the dashboard).
 
-    Booking or cancelling an interview for a student is on
-    ``client.applications``. This resource is the school's side:
+    Everything about interviews, from the school's settings to booking one
+    student's interview:
 
     * **Settings** (``interview/settings/``): the default interview length,
       whether and when parents can book or cancel, how many slots they are
@@ -30,8 +31,10 @@ class InterviewsResource(BaseResource):
       of one type, :meth:`open_times` lists the slots it can be booked into,
       and :meth:`book` and :meth:`cancel_booking` book and cancel as staff.
 
-    Reading needs any staff user. Writing needs the matching interview
-    permissions (Registrar role, school Admin or superuser).
+    Most of these endpoints need the matching interview permission even to
+    read (Registrar role, school Admin or superuser); a staff user without it
+    gets 403. Only :meth:`types`, :meth:`interviewers` and
+    :meth:`get_pdf_settings` are open to any staff user.
     """
 
     def get_settings(self) -> Dict[str, Any]:
@@ -62,24 +65,30 @@ class InterviewsResource(BaseResource):
         return list(self._list("interview/types/", page_size=1000))
 
     def ensure_types(self, names: List[str]) -> List[Dict[str, Any]]:
-        """Make sure interview types with these names exist; return all types.
+        """Make sure interview types with these names exist.
 
-        Existing types are matched by name (case-insensitive) and kept.
-        Nothing is written when every name already exists.
+        Returns the type for each name, in the order of *names*. Existing
+        types are matched by name (case-insensitive) and kept. Nothing is
+        written when every name already exists.
         """
+        if isinstance(names, str):
+            raise TypeError("names must be a list of names, not one string")
         settings = self.get_settings()
         current = settings.get("interview_types") or []
-        have = {(row.get("name") or "").strip().lower() for row in current}
-        missing = []
-        for name in names:
-            wanted = name.strip()
-            if wanted.lower() not in have:
-                have.add(wanted.lower())
-                missing.append({"name": wanted})
-        if not missing:
-            return current
-        saved = self.update_settings({**settings, "interview_types": [*current, *missing]})
-        return (saved or {}).get("interview_types") or self.types()
+        wanted = [name.strip() for name in names]
+        have = {_key(row.get("name")) for row in current}
+        missing: List[Dict[str, Any]] = []
+        for name in wanted:
+            if _key(name) not in have:
+                have.add(_key(name))
+                missing.append({"name": name})
+        if missing:
+            saved = self.update_settings(
+                {**settings, "interview_types": [*current, *missing]}
+            )
+            current = (saved or {}).get("interview_types") or self.types()
+        by_name = {_key(row.get("name")): row for row in current}
+        return [by_name[_key(name)] for name in wanted]
 
     def interviewers(self) -> List[Dict[str, Any]]:
         """List interviewers.
@@ -204,7 +213,10 @@ class InterviewsResource(BaseResource):
 
         Filters: ``interviewer`` (an id), ``date`` (comma-separated dates),
         ``date_gte``, ``date_lt`` and ``ordering`` (``date``, ``-date``,
-        ``start_time``, ``-start_time``). Each row has ``interviewer`` (an
+        ``start_time``, ``-start_time``, ``created_at``, comma-separated).
+        An ``ordering`` replaces the server's own, so for more than one page
+        pass one that cannot tie, such as ``"date,start_time,created_at"``,
+        or blocks can repeat or go missing. Each row has ``interviewer`` (an
         id), ``location`` (``{id, name}``), ``date``, ``start_time`` and
         ``end_time`` (``{"HH", "mm"}`` objects), ``types`` (ids),
         ``interview_duration_minutes``, ``parents_interview_duration``,
@@ -224,7 +236,7 @@ class InterviewsResource(BaseResource):
         *,
         interviewer: str,
         location: str,
-        date: str,
+        date: Union[str, dt.date],
         start_time: TimeLike,
         end_time: TimeLike,
         types: List[str],
@@ -236,8 +248,8 @@ class InterviewsResource(BaseResource):
         """Create one availability block and its bookable slots.
 
         ``interviewer``, ``location`` and ``types`` are ids, ``date`` is
-        ``YYYY-MM-DD`` and the times take anything :func:`~enrolhq.json_time`
-        accepts, such as ``"09:00"``. The block must be at least one
+        ``YYYY-MM-DD`` or a :class:`datetime.date`, and the times take
+        anything :func:`~enrolhq.json_time` accepts, such as ``"09:00"``. The block must be at least one
         interview long, and at least one type is required. The server does
         not stop two blocks for the same interviewer overlapping. The
         response leaves out ``has_bookings``.
@@ -247,7 +259,7 @@ class InterviewsResource(BaseResource):
             json={
                 "interviewer": interviewer,
                 "location": {"id": location},
-                "date": date,
+                "date": date.isoformat() if isinstance(date, dt.date) else date,
                 "start_time": json_time(start_time),
                 "end_time": json_time(end_time),
                 "types": list(types),
@@ -380,8 +392,11 @@ class InterviewsResource(BaseResource):
         completed_at, notes, ...}``. ``booking`` is ``None`` or ``{id, date,
         start_time, end_time, location, interviewer, can_be_cancelled, ...}``
         and ``is_booked`` is true while that booking is still ahead. A
-        student who was never given an interview has an empty list.
+        student who was never given an interview has an empty list, and so
+        does one in the trash, whose interviews the server does not list.
         """
+        if not application_id:
+            raise ValueError("application_id is required")
         rows = self._list(
             "interview/assigned-profiles/", params={"id": application_id}, page_size=10
         )
@@ -399,10 +414,17 @@ class InterviewsResource(BaseResource):
     ) -> Optional[Dict[str, Any]]:
         """Give a student an interview of this type, to be booked later.
 
-        Nothing happens if the student already has an unfinished interview
-        of the type. A new one fires the *Interview Assigned* event, so an
-        active automation on that event emails the family. ``interviewer``
-        (an id) limits the booking to that interviewer's availability.
+        A new interview fires the *Interview Assigned* event, so an active
+        automation on that event emails the family. A student who already has
+        an unfinished interview of the type gets no second one.
+
+        ``interviewer`` (an id) limits the booking to that interviewer's
+        availability. It is also set on an existing unfinished interview of
+        the type that has no current booking, so repeating the call with
+        another interviewer moves the interview to them.
+
+        The response only repeats the request, even when the id matched no
+        student, so check with :meth:`student_interviews`.
         """
         return self._post(
             "applications-list/bulk_add_interview/",
@@ -420,9 +442,9 @@ class InterviewsResource(BaseResource):
         """Remove a student's unfinished interview of this type.
 
         An interview that has ever been booked, even if the booking was
-        cancelled, is kept: use :meth:`delete_interview` for that. With
-        ``including_with_interviewer`` false an interview that already has
-        an interviewer is kept too.
+        cancelled, is kept: use :meth:`unassign_interviewer` and then
+        :meth:`delete_interview` for that. With ``including_with_interviewer``
+        false an interview that already has an interviewer is kept too.
         """
         return self._post(
             "applications-list/bulk_remove_interview/",
@@ -433,11 +455,28 @@ class InterviewsResource(BaseResource):
             params={"id": application_id},
         )
 
+    def assign_interviewer(
+        self, interview_id: str, interviewer: str
+    ) -> Optional[Dict[str, Any]]:
+        """Set the interviewer of one interview.
+
+        Booking is then limited to that interviewer's availability.
+        """
+        return self._post(
+            f"interview/interviews/{interview_id}/assign_interviewer/",
+            json={"interviewer": interviewer},
+        )
+
+    def unassign_interviewer(self, interview_id: str) -> Optional[Dict[str, Any]]:
+        """Clear the interviewer of one interview."""
+        return self._post(f"interview/interviews/{interview_id}/unassign_interviewer/")
+
     def delete_interview(self, interview_id: str) -> None:
         """Delete one interview and its cancelled bookings.
 
         400 if the interview has an interviewer or a booking that is not
-        cancelled.
+        cancelled: call :meth:`unassign_interviewer` and
+        :meth:`cancel_booking` first.
         """
         self._delete(f"interview/interviews/{interview_id}/")
 
@@ -488,6 +527,10 @@ class InterviewsResource(BaseResource):
             f"applications/{application_id}/cancel_interview_booking/",
             json={"booking": booking_id},
         )
+
+
+def _key(name: Any) -> str:
+    return str(name or "").strip().lower()
 
 
 def _questions(questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

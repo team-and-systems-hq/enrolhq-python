@@ -52,8 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get_question_section`, `create_question_section`,
   `update_question_section`, `delete_question_section`) and layout
   (`get_pdf_settings`, `update_pdf_settings`), and one student's interviews
-  (`student_interviews`, `assign`, `unassign`, `delete_interview`,
-  `open_times`, `book`, `cancel_booking`). README section *Enrolment journey
+  (`student_interviews`, `assign`, `unassign`, `assign_interviewer`,
+  `unassign_interviewer`, `delete_interview`, `open_times`, `book`,
+  `cancel_booking`). README section *Enrolment journey
   stages and interviews* covers both.
 - `client.forms.create(title, form_slug, schema_data, campus_id)`: a new
   custom form with its first draft, inactive and unpublished, with the

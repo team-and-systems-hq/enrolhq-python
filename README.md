@@ -132,7 +132,7 @@ for entry in client.audit_log.list(student_profile_id="student-uuid"):
 | Email templates | `client.email_templates` | list, get, find, create, update, update_fields, set_archived, toggle_archive, delete, groups, ensure_group, tags, signatures, get_signature, create_signature, update_signature |
 | Automations | `client.automations` | list, get, find, create, update, update_fields, set_active, delete, groups, ensure_group, event_codes |
 | Enrolment journey stages | `client.application_status_settings` | list, update, update_fields |
-| Interview set-up | `client.interviews` | get_settings, update_settings, update_settings_fields, types, ensure_types, interviewers, get_interviewer, find_interviewers, create_interviewer, update_interviewer, delete_interviewer, locations, create_location, update_location, ensure_location, availabilities, get_availability, create_availability, update_availability, time_slots, delete_availability, question_sections, get_question_section, create_question_section, update_question_section, delete_question_section, get_pdf_settings, update_pdf_settings, student_interviews, assign, unassign, delete_interview, open_times, book, cancel_booking |
+| Interview set-up | `client.interviews` | get_settings, update_settings, update_settings_fields, types, ensure_types, interviewers, get_interviewer, find_interviewers, create_interviewer, update_interviewer, delete_interviewer, locations, create_location, update_location, ensure_location, availabilities, get_availability, create_availability, update_availability, time_slots, delete_availability, question_sections, get_question_section, create_question_section, update_question_section, delete_question_section, get_pdf_settings, update_pdf_settings, student_interviews, assign, unassign, assign_interviewer, unassign_interviewer, delete_interview, open_times, book, cancel_booking |
 
 ## Comms Log entries and notes
 
@@ -591,7 +591,7 @@ availability:
 
 ```python
 client.interviews.update_settings_fields({"interview_duration_minutes": 45})
-kind = client.interviews.ensure_types(["Principal interview"])[-1]
+kind = client.interviews.ensure_types(["Principal interview"])[0]
 room = client.interviews.ensure_location("Principal's office")
 person = client.interviews.create_interviewer(
     "Dr Kim Tan", "principal@example.edu.au", default_location=room["id"]
@@ -641,7 +641,11 @@ interview, list the open slots, book one:
 ```python
 kind = client.interviews.types()[0]
 client.interviews.assign(application_id, kind["id"])
-interview = client.interviews.student_interviews(application_id)[-1]
+interview = next(
+    row
+    for row in client.interviews.student_interviews(application_id)
+    if row["interview_type"] == kind["id"] and not row["completed_at"]
+)
 slot = next(s for s in client.interviews.open_times(interview["id"]) if not s["is_booked"])
 booking = client.interviews.book(application_id, slot["token"])
 client.interviews.cancel_booking(application_id, booking["id"])
@@ -655,7 +659,10 @@ client.interviews.cancel_booking(application_id, booking["id"])
   While an interview is booked, `open_times` only lists other interviewers'
   slots on that date, and booking one adds a second interviewer.
 - **`unassign` keeps an interview that was ever booked**, even after the
-  booking was cancelled. `delete_interview` removes that one.
+  booking was cancelled. `delete_interview` removes that one, once
+  `unassign_interviewer` has cleared its interviewer if it has one.
+- **`assign` with an `interviewer` also moves an existing unbooked interview**
+  of that type to them.
 - **Question ids do not last.** The server recreates a section's questions
   each time the section is saved.
 

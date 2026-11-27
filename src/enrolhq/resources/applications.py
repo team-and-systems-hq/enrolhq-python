@@ -340,9 +340,9 @@ class ApplicationsResource(BaseResource):
     ) -> Optional[Dict[str, Any]]:
         """Book an interview for the application.
 
+        Prefer ``client.interviews.book()``, which sends the same request.
         *data* is ``{"token": ...}`` with a slot token from
-        ``client.interviews.open_times()``; ``client.interviews.book()``
-        builds it.
+        ``client.interviews.open_times()``.
         """
         return self._post(
             f"applications/{application_id}/book_interview/", json=data
@@ -353,6 +353,7 @@ class ApplicationsResource(BaseResource):
     ) -> Optional[Dict[str, Any]]:
         """Cancel an interview booking.
 
+        The same request as ``client.interviews.cancel_booking()``.
         *booking* is the booking's id, from
         ``client.interviews.student_interviews()``. The server answers 400
         without it.
