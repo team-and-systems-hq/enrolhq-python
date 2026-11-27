@@ -70,7 +70,7 @@ class _Http:
         return self._next()
 
     def delete(self, url, **kwargs):
-        self.requests.append(("DELETE", url, kwargs.get("params")))
+        self.requests.append(("DELETE", url, kwargs.get("params") or kwargs.get("json")))
         return self._next()
 
     def writes(self):
@@ -970,3 +970,231 @@ def test_ensure_group_reuses_or_adds_after_the_others():
     http = _Http(_page([]), [{"id": "g3", "name": "Reminders"}])
     assert AutomationsResource(http, BASE).ensure_group("Reminders")["id"] == "g3"
     assert http.writes()[0][1] == BASE + "followup-groups/batch_update/"
+
+
+def _stage(code, label, **extra):
+    return {
+        "id": f"s{code}", "application_status": code, "status_label": label,
+        "default_status_label": label, "is_status_enabled": True,
+        "is_status_enabled_editable": True, "is_parent_dashboard_stage_visible": False,
+        **extra,
+    }
+
+
+def test_journey_stages_update_fields_changes_and_reorders():
+    from enrolhq.resources.application_status_settings import (
+        ApplicationStatusSettingsResource,
+    )
+    rows = [_stage(0, "Enquiry"), _stage(13, "Interview"), _stage(9, "Wait List"), _stage(12, "Offer")]
+    http = _Http(_page(rows), [])
+    ApplicationStatusSettingsResource(http, BASE).update_fields(
+        {9: {"status_label": "Waiting Pool"}}, order=[12, 13]
+    )
+    method, url, body = http.writes()[0]
+    assert (method, url) == ("PUT", BASE + "application-status-settings/batch_update/")
+    assert [row["id"] for row in body] == ["s0", "s12", "s9", "s13"]
+    assert body[2] == {
+        "id": "s9", "status_label": "Waiting Pool", "is_status_enabled": True,
+        "is_parent_dashboard_stage_visible": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "changes, order, match",
+    [
+        ({99: {}}, None, "Unknown application status"),
+        (None, [9, 9], "twice"),
+        ({9: {"is_parent_dashboard_visible": True}}, None, "Cannot change 'is_parent_dashboard_visible'"),
+        ({9: {"application_status": 10}}, None, "Cannot change 'application_status'"),
+    ],
+)
+def test_journey_stages_update_fields_rejects_bad_input(changes, order, match):
+    from enrolhq.resources.application_status_settings import (
+        ApplicationStatusSettingsResource,
+    )
+    http = _Http(_page([_stage(9, "Wait List")]))
+    with pytest.raises(ValueError, match=match):
+        ApplicationStatusSettingsResource(http, BASE).update_fields(changes, order=order)
+    assert http.writes() == []
+
+
+def _interview_settings():
+    return {
+        "interview_duration_minutes": 30, "parents_interview_duration": 25,
+        "interview_types": [{"id": "y1", "name": "Interview", "is_removable": False}],
+    }
+
+
+def test_interview_settings_fields_and_ensure_types():
+    from enrolhq.resources.interviews import InterviewsResource
+    http = _Http(_interview_settings(), {})
+    InterviewsResource(http, BASE).update_settings_fields({"interview_duration_minutes": 45})
+    method, url, body = http.writes()[0]
+    assert (method, url) == ("PUT", BASE + "interview/settings/")
+    assert (body["interview_duration_minutes"], body["parents_interview_duration"]) == (45, 25)
+    assert body["interview_types"] == _interview_settings()["interview_types"]
+
+    http = _Http(_interview_settings())
+    assert InterviewsResource(http, BASE).ensure_types([" interview "]) == body["interview_types"]
+    assert http.writes() == []
+
+    saved = {"interview_types": [
+        {"id": "y3", "name": "Assessment"}, {"id": "y1", "name": "Interview"}, {"id": "y2", "name": "Tour"},
+    ]}
+    http = _Http(_interview_settings(), saved)
+    found = InterviewsResource(http, BASE).ensure_types(["Tour", "tour", "Assessment", "INTERVIEW"])
+    assert [row["id"] for row in found] == ["y2", "y2", "y3", "y1"]
+    assert http.writes()[0][2]["interview_types"][1:] == [{"name": "Tour"}, {"name": "Assessment"}]
+
+    http = _Http()
+    with pytest.raises(TypeError, match="list of names"):
+        InterviewsResource(http, BASE).ensure_types("Tour")
+    assert http.requests == []
+
+
+def test_interviewer_create_update_and_delete():
+    from enrolhq.resources.interviews import InterviewsResource
+    current = {
+        "id": "i1", "name": "Kim Tan", "email": "kim@example.edu.au",
+        "default_location": {"id": "r1", "name": "Office"}, "calendar": "https://x/ical",
+        "is_hide_interviewer_name": False, "is_interview_booking_enabled": True,
+    }
+    http = _Http({}, current, {}, current, {}, None)
+    resource = InterviewsResource(http, BASE)
+    resource.create_interviewer("Kim Tan", "kim@example.edu.au", default_location="r1")
+    resource.update_interviewer("i1", {"name": "Dr Kim Tan"})
+    resource.update_interviewer("i1", {"default_location": None})
+    resource.delete_interviewer("i1", "i2")
+    created, renamed, moved, deleted = http.writes()
+    assert created == ("POST", BASE + "interview/interviewers/", {
+        "name": "Kim Tan", "email": "kim@example.edu.au", "default_location": {"id": "r1"},
+        "is_hide_interviewer_name": False, "is_interview_booking_enabled": True,
+    })
+    assert (renamed[2]["name"], renamed[2]["default_location"]) == (
+        "Dr Kim Tan", {"id": "r1", "name": "Office"},
+    )
+    assert moved[2]["default_location"] is None
+    assert deleted == ("DELETE", BASE + "interview/interviewers/i1/", {"new_interviewer": "i2"})
+
+
+def test_location_ensure_and_update_keeps_the_image():
+    from enrolhq.resources.interviews import InterviewsResource
+    room = {"id": "r1", "name": "Office", "hint_text": "", "hint_image": "https://cdn/room.png", "campus": None}
+    http = _Http(_page([room]))
+    assert InterviewsResource(http, BASE).ensure_location(" office ")["id"] == "r1"
+    assert http.writes() == []
+
+    http = _Http(_page([room]), {"id": "r2", "name": "Library"}, room, {})
+    resource = InterviewsResource(http, BASE)
+    assert resource.ensure_location("Library")["id"] == "r2"
+    resource.update_location("r1", {"hint_text": "Level 2"})
+    created, updated = http.writes()
+    assert created == ("POST", BASE + "school-locations/", {"name": "Library", "campus": None, "hint_text": ""})
+    assert updated == ("PUT", BASE + "school-locations/r1/", {
+        "id": "r1", "name": "Office", "hint_text": "Level 2", "campus": None,
+    })
+
+
+def test_availability_create_sends_time_objects_and_filters_pass_through():
+    from enrolhq.resources.interviews import InterviewsResource
+    http = _Http({"id": "v1"}, _page([]), None)
+    resource = InterviewsResource(http, BASE)
+    resource.create_availability(
+        interviewer="i1", location="r1", date=dt.date(2027, 3, 2), start_time="9:00",
+        end_time=dt.time(12, 30), types=["y1"], interview_duration_minutes=30,
+        parents_interview_duration=25,
+    )
+    list(resource.availabilities(interviewer="i1", date_gte="2027-03-01"))
+    resource.delete_availability("v1")
+    slots = _Http([{"id": "k1", "booking": None}])
+    assert InterviewsResource(slots, BASE).time_slots("v1") == [{"id": "k1", "booking": None}]
+    assert slots.requests[0][1] == BASE + "interview/availabilities/v1/time-slots/"
+    assert http.requests[0] == ("POST", BASE + "interview/availabilities/", {
+        "interviewer": "i1", "location": {"id": "r1"}, "date": "2027-03-02",
+        "start_time": {"HH": "09", "mm": "00"}, "end_time": {"HH": "12", "mm": "30"},
+        "types": ["y1"], "interview_duration_minutes": 30, "parents_interview_duration": 25,
+        "online_meeting_link": "", "meeting_instructions": "",
+    })
+    assert http.requests[1][2]["interviewer"] == "i1"
+    assert http.requests[1][2]["date_gte"] == "2027-03-01"
+    assert http.requests[2][:2] == ("DELETE", BASE + "interview/availabilities/v1/")
+
+
+def test_question_sections_number_their_questions_in_order():
+    from enrolhq.resources.interviews import InterviewsResource
+    current = {
+        "id": "q1", "position": 2, "label": "Comments", "allowed_entry_grades": [7],
+        "questions": [{"id": "a", "position": 1, "label": "Academic", "lines_for_answer": 2, "is_underline_shown": False}],
+    }
+    http = _Http({"id": "q2"}, current, {}, None)
+    resource = InterviewsResource(http, BASE)
+    resource.create_question_section("Family", [{"label": "Siblings"}], allowed_campuses=["c1"])
+    resource.update_question_section(
+        "q1", {"position": 1, "questions": [{"label": "Pastoral"}, current["questions"][0]]}
+    )
+    resource.delete_question_section("q1")
+    created, updated, deleted = http.writes()
+    assert created == ("POST", BASE + "interview/questions/sections/", {
+        "label": "Family", "position": None,
+        "questions": [{"lines_for_answer": 4, "is_underline_shown": True, "label": "Siblings", "position": 1}],
+        "allowed_entry_grades": [], "allowed_campuses": ["c1"],
+        "allowed_attendance_types": [], "allowed_custom_categories_options": [],
+    })
+    assert updated[:2] == ("PUT", BASE + "interview/questions/sections/q1/")
+    assert (updated[2]["position"], updated[2]["allowed_entry_grades"]) == (1, [7])
+    assert updated[2]["questions"] == [
+        {"lines_for_answer": 4, "is_underline_shown": True, "label": "Pastoral", "position": 1},
+        {"id": "a", "position": 2, "label": "Academic", "lines_for_answer": 2, "is_underline_shown": False},
+    ]
+    assert deleted[:2] == ("DELETE", BASE + "interview/questions/sections/q1/")
+
+
+def test_pdf_settings_update_keeps_the_other_flags():
+    from enrolhq.resources.interviews import InterviewsResource
+    current = {
+        "pdf_settings": {"title": "Interview Review", "is_avatar_visible": True, "is_medical_data_visible": True},
+        "default_pdf_settings": {"title": "Interview Review"},
+    }
+    http = _Http(current, {})
+    InterviewsResource(http, BASE).update_pdf_settings({"is_medical_data_visible": False})
+    assert http.writes() == [("PUT", BASE + "interview/pdf-settings/", {"pdf_settings": {
+        "title": "Interview Review", "is_avatar_visible": True, "is_medical_data_visible": False,
+    }})]
+
+
+def test_a_students_interview_is_assigned_booked_and_cancelled():
+    from enrolhq.resources.applications import ApplicationsResource
+    from enrolhq.resources.interviews import InterviewsResource
+    interview = {"id": "n1", "interview_type": "y1", "booking": None}
+    slots = [[{"date": "2027-03-02", "token": "t1"}], [{"date": "2027-03-03", "token": "t2"}]]
+    http = _Http(
+        _page([{"id": "p1", "interviews": [interview]}]), _page([]), {}, {}, slots, {}, {}, {}, {}, {}, None, {},
+    )
+    resource = InterviewsResource(http, BASE)
+    assert resource.student_interviews("p1") == [interview]
+    assert resource.student_interviews("p2") == []
+    resource.assign("p1", "y1", interviewer="i1")
+    resource.unassign("p1", "y1", including_with_interviewer=False)
+    assert [slot["token"] for slot in resource.open_times("n1")] == ["t1", "t2"]
+    resource.book("p1", "t2")
+    resource.book("p1", "t1", email_templates_to_send=["e1"])
+    resource.cancel_booking("p1", "b1")
+    resource.assign_interviewer("n1", "i2")
+    resource.unassign_interviewer("n1")
+    resource.delete_interview("n1")
+    with pytest.raises(ValueError, match="application_id is required"):
+        resource.student_interviews("")
+    ApplicationsResource(http, BASE).cancel_interview("p1", "b2")
+    assert http.requests[0][1:] == (BASE + "interview/assigned-profiles/", {"id": "p1", "page": 1, "page_size": 10})
+    assert http.requests[4][1] == BASE + "interview/interviews/n1/interview_intervals/"
+    assert http.writes() == [
+        ("POST", BASE + "applications-list/bulk_add_interview/", {"interview_type": "y1", "interviewer": "i1"}),
+        ("POST", BASE + "applications-list/bulk_remove_interview/", {"interview_type": "y1", "including_with_interviewer": False}),
+        ("POST", BASE + "applications/p1/book_interview/", {"token": "t2"}),
+        ("POST", BASE + "applications/p1/book_interview/", {"token": "t1", "email_templates_to_send": ["e1"]}),
+        ("POST", BASE + "applications/p1/cancel_interview_booking/", {"booking": "b1"}),
+        ("POST", BASE + "interview/interviews/n1/assign_interviewer/", {"interviewer": "i2"}),
+        ("POST", BASE + "interview/interviews/n1/unassign_interviewer/", None),
+        ("DELETE", BASE + "interview/interviews/n1/", None),
+        ("POST", BASE + "applications/p1/cancel_interview_booking/", {"booking": "b2"}),
+    ]

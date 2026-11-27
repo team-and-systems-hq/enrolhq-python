@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guide wrongly said to drop it on v2; without it follow-up rules do not run.
   `examples/15_leads.py` now sets it.
 
+### Fixed
+
+- `client.applications.cancel_interview(application_id, booking)` now takes
+  the booking's id. It sent no body before, which the server always answered
+  with 400.
+
 ### Added
 
 - **Email templates** (`client.email_templates`, `email-templates/`): `list`,
@@ -31,6 +37,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `create`, `update`, `update_fields`, `set_active`, `delete`, `groups`,
   `ensure_group` and `event_codes`. README section *Email templates and automations* covers
   both.
+- **Enrolment journey stages** (`client.application_status_settings`,
+  `application-status-settings/`): `list`, `update` and `update_fields`, which
+  renames stages, switches them on or off, shows them to parents and reorders
+  them. `client.reference_data.application_status_settings()` still reads them.
+- **Interview set-up** (`client.interviews`): the settings and interview types
+  (`get_settings`, `update_settings`, `update_settings_fields`, `types`,
+  `ensure_types`), interviewers (`interviewers`, `get_interviewer`,
+  `find_interviewers`, `create_interviewer`, `update_interviewer`,
+  `delete_interviewer`), locations (`locations`, `create_location`,
+  `update_location`, `ensure_location`) and availability (`availabilities`,
+  `get_availability`, `create_availability`, `update_availability`,
+  `time_slots`, `delete_availability`), the review sheet's questions (`question_sections`,
+  `get_question_section`, `create_question_section`,
+  `update_question_section`, `delete_question_section`) and layout
+  (`get_pdf_settings`, `update_pdf_settings`), and one student's interviews
+  (`student_interviews`, `assign`, `unassign`, `assign_interviewer`,
+  `unassign_interviewer`, `delete_interview`, `open_times`, `book`,
+  `cancel_booking`). README section *Enrolment journey
+  stages and interviews* covers both.
 - `client.forms.create(title, form_slug, schema_data, campus_id)`: a new
   custom form with its first draft, inactive and unpublished, with the
   settings the dashboard gives a new form.
