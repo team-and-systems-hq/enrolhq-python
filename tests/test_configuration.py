@@ -1093,6 +1093,9 @@ def test_availability_create_sends_time_objects_and_filters_pass_through():
     )
     list(resource.availabilities(interviewer="i1", date_gte="2027-03-01"))
     resource.delete_availability("v1")
+    slots = _Http([{"id": "k1", "booking": None}])
+    assert InterviewsResource(slots, BASE).time_slots("v1") == [{"id": "k1", "booking": None}]
+    assert slots.requests[0][1] == BASE + "interview/availabilities/v1/time-slots/"
     assert http.requests[0] == ("POST", BASE + "interview/availabilities/", {
         "interviewer": "i1", "location": {"id": "r1"}, "date": "2027-03-02",
         "start_time": {"HH": "09", "mm": "00"}, "end_time": {"HH": "12", "mm": "30"},

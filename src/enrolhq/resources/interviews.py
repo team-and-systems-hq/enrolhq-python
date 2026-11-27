@@ -273,6 +273,15 @@ class InterviewsResource(BaseResource):
             json=deep_merge(current, changes),
         )
 
+    def time_slots(self, availability_id: str) -> List[Dict[str, Any]]:
+        """List the slots of one availability block, earliest first.
+
+        Each is ``{id, interviewer, availability, booking, date, start_time,
+        end_time}`` with times as ``"09:00:00"``. ``booking`` is ``None``
+        while the slot is free.
+        """
+        return self._get(f"interview/availabilities/{availability_id}/time-slots/")
+
     def delete_availability(self, availability_id: str) -> None:
         """Delete an availability block. 400 if a slot in it is booked."""
         self._delete(f"interview/availabilities/{availability_id}/")

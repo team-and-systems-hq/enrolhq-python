@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `delete_interviewer`), locations (`locations`, `create_location`,
   `update_location`, `ensure_location`) and availability (`availabilities`,
   `get_availability`, `create_availability`, `update_availability`,
-  `delete_availability`), the review sheet's questions (`question_sections`,
+  `time_slots`, `delete_availability`), the review sheet's questions (`question_sections`,
   `get_question_section`, `create_question_section`,
   `update_question_section`, `delete_question_section`) and layout
   (`get_pdf_settings`, `update_pdf_settings`), and one student's interviews
